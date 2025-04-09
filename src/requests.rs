@@ -6,7 +6,7 @@ use serde::{
 };
 
 use crate::game::{
-    common::Vector2F, 
+    math::Vector2F, 
     world::{Entity, EntityId, World}
 };
 

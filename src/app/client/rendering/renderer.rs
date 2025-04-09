@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow, 
-    sync::{Arc, Mutex}
+    sync::Arc
 };
 
 use bytemuck::{
@@ -11,11 +11,10 @@ use bytemuck::{
 use wgpu::{
     util::DeviceExt, Device, RenderPipeline, Surface
 };
+
 use winit::window::Window;
 
-use crate::game::common::Vector2F;
-
-use super::{AppData, EntityView};
+use super::AppData;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

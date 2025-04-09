@@ -1,8 +1,10 @@
+pub mod rendering;
+
 use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
-use crate::game::{common::Vector2F, world::{EntityId, World}};
+use crate::game::{math::Vector2F, world::{EntityId, World}};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientSessionError {
@@ -42,7 +44,7 @@ impl ClientSession {
 
     /// Line is trimmed already
     fn on_client_request(player_id: EntityId, request: &str, world: Arc<Mutex<World>>) -> String {
-        crate::client_requests::route_request(player_id, request, world)
+        crate::requests::route_request(player_id, request, world)
     }
 
     fn on_client_disconnect(player_id: EntityId, world: Arc<Mutex<World>>) {

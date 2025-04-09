@@ -1,4 +1,7 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, 
+    Serialize
+};
 
 pub type Vector2F = Vector2X<f32>;
 pub type Vector2U = Vector2X<u32>;
@@ -74,15 +77,6 @@ impl Vector2X<f32>
         self.x * rhs.x + self.y * rhs.y
     }
 }
-
-// impl<T> Vector2X<T>
-// where 
-//     T: std::ops::Mul<Output = T> + std::ops::Add<Output = T> + Into<f32> + Copy
-// {
-//     pub fn dot(&self, rhs: Self) -> f32 {
-//         T::into(self.x * rhs.x + self.y * rhs.y)
-//     }
-// }
 
 impl<T> std::ops::Add for Vector2X<T> 
 where 

@@ -1,4 +1,8 @@
-use super::common::{Rect2F, Rect2X, Vector2F};
+use super::math::{
+    Rect2F,
+    Vector2F
+};
+
 use rand::seq::IndexedRandom;
 
 #[derive(Debug)]

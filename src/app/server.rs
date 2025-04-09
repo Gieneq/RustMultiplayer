@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::{
-    game::world::World, 
-    multiplayer_client::ClientSession
+    app::client::ClientSession, 
+    game::world::World
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -125,27 +125,33 @@ impl MultiplayerServerHandler {
     }
 }
 
-#[tokio::test]
-async fn test_server_creation() {
-    let server = MultiplayerServer::bind_any_local().await.unwrap();
-    let server_address = server.get_local_address().unwrap();
-    println!("{server_address:?}");
-    let server_handler = server.run().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    server_handler.shutdown().await.unwrap();
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::game::math::Vector2F;
 
-#[tokio::test]
-async fn test_server_adding_entities() {
-    let server = MultiplayerServer::bind_any_local().await.unwrap();
-    let server_handler = server.run().await.unwrap();
-
-    {
-        let mut world = server_handler.world.lock().unwrap();
-        world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));
-        // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
+    #[tokio::test]
+    async fn test_server_creation() {
+        let server = MultiplayerServer::bind_any_local().await.unwrap();
+        let server_address = server.get_local_address().unwrap();
+        println!("{server_address:?}");
+        let server_handler = server.run().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        server_handler.shutdown().await.unwrap();
     }
-
-    tokio::time::sleep(Duration::from_millis(11000)).await;
-    server_handler.shutdown().await.unwrap();
+    
+    #[tokio::test]
+    async fn test_server_adding_entities() {
+        let server = MultiplayerServer::bind_any_local().await.unwrap();
+        let server_handler = server.run().await.unwrap();
+    
+        {
+            let mut world = server_handler.world.lock().unwrap();
+            world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));
+            // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
+        }
+    
+        tokio::time::sleep(Duration::from_millis(11000)).await;
+        server_handler.shutdown().await.unwrap();
+    }
 }

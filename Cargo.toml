@@ -20,3 +20,5 @@ pollster = "0.4"
 wgpu = "24.0.0"
 winit = "0.30.8"
 bytemuck = "1.22.0"
+
+clap = { version = "4.5.31", features = ["derive"] }

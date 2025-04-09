@@ -1,4 +1,4 @@
-use crate::game::common::Vector2F;
+use crate::game::math::Vector2F;
 
 pub mod renderer;
 
