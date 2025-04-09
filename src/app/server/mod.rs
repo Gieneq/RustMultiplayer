@@ -1,3 +1,6 @@
+pub mod client_session;
+pub mod routes;
+
 use std::{
     sync::{
         Arc, 
@@ -6,10 +9,9 @@ use std::{
     time::Duration
 };
 
-use crate::{
-    app::client::ClientSession, 
-    game::world::World
-};
+use client_session::ClientSession;
+
+use crate::game::world::World;
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -35,7 +37,6 @@ pub struct MultiplayerServer {
 }
 
 impl MultiplayerServer {
-    // const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(250); // Slow for testing purpose
     const MAIN_LOOP_INTERVAL: Duration = Duration::from_millis(32);
 
     pub async fn bind_any_local() -> Result<Self, MultiplayerServerError> {
@@ -148,10 +149,9 @@ mod tests {
         {
             let mut world = server_handler.world.lock().unwrap();
             world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));
-            // world.create_entity_npc("Starlette", Vector2F::new(-2.5, 0.0));
         }
     
-        tokio::time::sleep(Duration::from_millis(11000)).await;
+        tokio::time::sleep(Duration::from_millis(3000)).await;
         server_handler.shutdown().await.unwrap();
     }
 }

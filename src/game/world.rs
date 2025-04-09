@@ -5,6 +5,12 @@ use super::math::{
 
 use rand::seq::IndexedRandom;
 
+pub const TILE_SIZE: f32 = 5.0;
+pub const ENTITY_SIZE: Vector2F = Vector2F {
+    x: TILE_SIZE - 0.2,
+    y: TILE_SIZE - 0.2
+};
+
 #[derive(Debug)]
 pub enum WorldError {
     EntityNotExist,
@@ -34,9 +40,7 @@ pub struct NpcController {
 }
 
 #[derive(Debug)]
-pub struct PlayerController {
-    dummy: u8,
-}
+pub struct PlayerController;
 
 #[derive(Debug)]
 pub enum EntityController {
@@ -65,14 +69,12 @@ pub struct Entity {
 
 const PLAYER_MOVEMENT_SPEED: f32 = 0.9;
 const NPC_MOVEMENT_SPEED: f32 = 0.3;
-const NPC_DIRECTION_SELECTION_TICKS: u32 = 3 * 13;
+const NPC_DIRECTION_SELECTION_TICKS_RANGE: std::ops::Range<u32> = 5..40;
 
 impl World {
-    pub const TILE_SIZE_SIDE: f32 = 5.0;
-
     pub fn get_grid_aligned_position(pos: &Vector2F) -> Vector2F {
         fn align_coord(coord: f32) -> f32 {
-            (coord / World::TILE_SIZE_SIDE).floor() * World::TILE_SIZE_SIDE
+            (coord / TILE_SIZE).floor() * TILE_SIZE
         }
 
         Vector2F::new(  
@@ -109,9 +111,7 @@ impl World {
             EntityStats {
                 movement_speed: PLAYER_MOVEMENT_SPEED
             }, 
-            EntityController::Player(PlayerController {
-                dummy: 123
-            })
+            EntityController::Player(PlayerController)
         )
     }
 
@@ -129,8 +129,8 @@ impl World {
             }, 
             EntityController::Npc(NpcController {
                 spawnpoint: intial_position,
-                roaming_range: Some(3.0),
-                change_destination_counter: rand::random_range(0..NPC_DIRECTION_SELECTION_TICKS)
+                roaming_range: Some(TILE_SIZE * 2.5),
+                change_destination_counter: rand::random_range(NPC_DIRECTION_SELECTION_TICKS_RANGE)
             })
         )
     }
@@ -172,7 +172,7 @@ impl World {
     }
 
     pub fn is_tile_occupied(&self, tile_position: &Vector2F) -> bool {
-        let checked_tile = Rect2F::new(tile_position.x, tile_position.y, Self::TILE_SIZE_SIDE, Self::TILE_SIZE_SIDE);
+        let checked_tile = Rect2F::new(tile_position.x, tile_position.y, TILE_SIZE, TILE_SIZE);
         for entity in self.entities.iter() {
             let is_colliding = match entity.state {
                 EntityState::Idle => checked_tile.contains(&entity.position),
@@ -192,13 +192,15 @@ impl World {
         log::trace!("World tick");
 
         // TODO Do it better
+        // BUG 2 entities can select the same destination this way
         let occupied_positions: Vec<_> = self
         .entities
         .iter()
         .map(|e| match &e.state {
-            EntityState::Moving { destination, .. } => *destination,
-            EntityState::Idle => e.position,
+            EntityState::Moving { destination, from_position } => vec![*destination, *from_position],
+            EntityState::Idle => vec![e.position],
         })
+        .flatten()
         .collect();
 
         self.entities.iter_mut().for_each(|e| {
@@ -224,7 +226,7 @@ impl World {
                     log::debug!("   {} reached destination {} go IDLE", e.name, destination);
                     e.state = EntityState::Idle;
                     if let EntityController::Npc(npc_controller) = &mut e.controller {
-                        npc_controller.change_destination_counter = NPC_DIRECTION_SELECTION_TICKS;
+                        npc_controller.change_destination_counter = rand::random_range(NPC_DIRECTION_SELECTION_TICKS_RANGE);
                     }
                     e.position = destination;
                 }
@@ -233,7 +235,7 @@ impl World {
             match &mut e.controller {
                 EntityController::Npc(npc_controller) => {
                     // Check if is capable of roaming
-                    if let Some(_range) = npc_controller.roaming_range {
+                    if let Some(range) = npc_controller.roaming_range {
 
                         // Every `xx` try selecting new destination
                         // If destination is not valid (out of range, occupied or reserved)
@@ -254,7 +256,12 @@ impl World {
 
                                 let random_direction = directions.choose(&mut rand::rng()).unwrap();
 
-                                let destination_position = e.position + (*random_direction * Self::TILE_SIZE_SIDE);
+                                let destination_position = e.position + (*random_direction * TILE_SIZE);
+
+                                if (destination_position - npc_controller.spawnpoint).length_squared() > range.powi(2) {
+                                    log::trace!("   Tile {destination_position} out of range!");
+                                    return;
+                                }
 
                                 if !occupied_positions.contains(&destination_position) {
                                     log::info!("   {} Setting new destination from {} -to-> {} go MOVING!", 
@@ -269,12 +276,9 @@ impl World {
                                 }
                             }
                         }
-
                     }
                 },
-                EntityController::Player(_player_controller) => {
-                    log::trace!("Player controller usage in tick missing")
-                },
+                EntityController::Player(_player_controller) => { },
             }
         });
     }
@@ -358,9 +362,9 @@ fn test_coords_positive_alignment() {
     let x_tiles_count: f32 = 0.0;
     let y_tiles_count: f32 = 2.0;
 
-    let v1 = Vector2F::new((x_tiles_count + 0.1) * World::TILE_SIZE_SIDE, (y_tiles_count + 0.7) * World::TILE_SIZE_SIDE);
+    let v1 = Vector2F::new((x_tiles_count + 0.1) * TILE_SIZE, (y_tiles_count + 0.7) * TILE_SIZE);
     let v2 = World::get_grid_aligned_position(&v1);
-    let v2_expected = Vector2F::new(x_tiles_count * World::TILE_SIZE_SIDE, y_tiles_count * World::TILE_SIZE_SIDE);
+    let v2_expected = Vector2F::new(x_tiles_count * TILE_SIZE, y_tiles_count * TILE_SIZE);
 
     assert_eq!(v2, v2_expected, "v1={v1:?}");
 }
@@ -370,9 +374,9 @@ fn test_coords_negative_alignment() {
     let x_tiles_count: f32 = 0.0;
     let y_tiles_count: f32 = -3.0;
 
-    let v1 = Vector2F::new((x_tiles_count - 0.1) * World::TILE_SIZE_SIDE, (y_tiles_count - 0.7) * World::TILE_SIZE_SIDE);
+    let v1 = Vector2F::new((x_tiles_count - 0.1) * TILE_SIZE, (y_tiles_count - 0.7) * TILE_SIZE);
     let v2 = World::get_grid_aligned_position(&v1);
-    let v2_expected = Vector2F::new((x_tiles_count - 1.0) * World::TILE_SIZE_SIDE, (y_tiles_count - 1.0) * World::TILE_SIZE_SIDE);
+    let v2_expected = Vector2F::new((x_tiles_count - 1.0) * TILE_SIZE, (y_tiles_count - 1.0) * TILE_SIZE);
 
     assert_eq!(v2, v2_expected, "v1={v1:?}");
 }

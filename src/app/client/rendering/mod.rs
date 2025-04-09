@@ -9,8 +9,7 @@ pub struct EntityView {
     pub color: [f32; 3]
 }
 
-
-
+// TODO rename to something rendering related
 #[derive(Default)]
 pub struct AppData {
     pub entities: Vec<EntityView>,
