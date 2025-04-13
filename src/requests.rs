@@ -11,7 +11,7 @@ use crate::game::{
     }
 };
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MoveDirection {
     Up,
     Down,
@@ -19,7 +19,7 @@ pub enum MoveDirection {
     Right,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientRequest {
     GetId,
@@ -30,7 +30,7 @@ pub enum ClientRequest {
     },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EntityCheckData {
     pub position: Vector2F,
     pub size: Vector2F,
@@ -40,7 +40,7 @@ pub struct EntityCheckData {
     pub is_npc: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientResponse {
     GetId {
@@ -50,7 +50,8 @@ pub enum ClientResponse {
         entities: Vec<EntityCheckData>
     },
     Healthcheck {
-        msg: String
+        msg: String,
+        connections: usize,
     },
     BadRequest {
         err: String

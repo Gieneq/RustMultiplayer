@@ -2,14 +2,13 @@ pub mod client_session;
 pub mod routes;
 
 use std::{
-    sync::{
+    collections::HashMap, sync::{
         Arc, 
         Mutex
-    },
-    time::Duration
+    }, time::Duration
 };
 
-use client_session::ClientSession;
+use client_session::{ClientSession, ClientSessionDisconnectEvent, ClientSessionId};
 
 use crate::game::world::World;
 
@@ -28,6 +27,7 @@ pub enum MultiplayerServerError {
 pub struct MultiplayerServerHandler {
     pub world: Arc<Mutex<World>>,
     connection_task_handler: tokio::task::JoinHandle<()>,
+    client_sessions_handlers: Arc<Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>>,
     main_task_handler: tokio::task::JoinHandle<()>,
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
 }
@@ -61,18 +61,61 @@ impl MultiplayerServer {
         let (shutdown_sender, mut shutdown_receiver) = tokio::sync::oneshot::channel();
         let (shutdown_server_sender, mut shutdown_server_receiver) = tokio::sync::oneshot::channel();
 
+        let client_sessions_handlers: Arc<Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>> = Arc::new(Mutex::new(HashMap::new()));
+        let (client_disconnect_tx, mut client_disconnect_rx) = tokio::sync::mpsc::channel::<ClientSessionDisconnectEvent>(32);
+        
+        let client_sessions_handlers_shared = client_sessions_handlers.clone();
+
         let connection_task_handler = tokio::spawn(async move {
+            let mut new_client_session_id= 0;
             loop {
                 tokio::select! {
                     _ = &mut shutdown_server_receiver => {
                         log::debug!("Received server shut down signal...");
                         break;
                     },
+                    client_session_id = client_disconnect_rx.recv() => {
+                        if let Some(client_session_id) = client_session_id {
+                            println!("Disconnection client id={}.", client_session_id.id);
+                            log::debug!("Client session got disconencted {}", client_session_id.id);
+
+                            // Move client session
+                            let client_session_handler = {
+                                let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
+                                client_sessions_handlers_guard.remove(&client_session_id.id)
+                            };                       
+                            
+                            // Await task finish
+                            if let Some(client_session_handler) = client_session_handler {
+                                client_session_handler.task_handler.await.expect("Client session should close gracefully");
+                            } else {
+                                log::warn!("Attempt to remove not existing client session {}", client_session_id.id);
+                            };
+                            
+                        } else {
+                            log::warn!("Received None from client_disconnect_rx colelctor!");
+                        }
+                    }
                     incomming_connection = self.listener.accept() => {
                         if let Ok(connection) = incomming_connection {
-                            let client_session = ClientSession::new(connection);
-                             //TODO consider storing handler.await.unwrap();
-                            client_session.run(world_shared_clients.clone()).unwrap()
+                            let assigned_client_session_id = {
+                                let tmp = new_client_session_id;
+                                new_client_session_id += 1;
+                                tmp
+                            };
+
+                            let client_session = ClientSession::new(connection, assigned_client_session_id);
+                            
+                            match client_session.run(world_shared_clients.clone(), client_disconnect_tx.clone()) {
+                                Ok(handler) => {
+                                    let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
+                                    client_sessions_handlers_guard.insert(handler.id, handler);
+                                    println!("Appending connection, count={}", client_sessions_handlers_guard.len());
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to run client session: {:?}", e);
+                                }
+                            }
                         }
                     },
                     _ = tokio::time::sleep(Duration::from_secs(1)) => {
@@ -109,6 +152,7 @@ impl MultiplayerServer {
         Ok(MultiplayerServerHandler {
             world,
             connection_task_handler,
+            client_sessions_handlers: client_sessions_handlers_shared,
             main_task_handler,
             shutdown_sender,
         })
@@ -123,6 +167,11 @@ impl MultiplayerServerHandler {
         self.connection_task_handler.await?;
         log::debug!("Server shut down successfully!");
         Ok(())
+    }
+
+    pub fn connections_count(&self) -> usize {
+        let client_sessions_handlers_guard = self.client_sessions_handlers.lock().expect("Locking failed");
+        client_sessions_handlers_guard.len()
     }
 }
 

@@ -331,26 +331,27 @@ fn test_world_entity_creation_should_increase_entities_count() {
 }
 
 #[test]
-fn test_world_entity_access() {
+fn test_world_entity_access_should_align_position() {
     let entity_name = "Bob";
     let entity_position = Vector2F::new(1.0, 2.0);
+    let expected_position = Vector2F::new(0.0, 0.0);
 
     let mut world = World::new();
     let new_entity_id = world.create_entity_npc(entity_name, entity_position, Vector2F::new(1.0, 1.0));
 
     let entity = world.get_entity_by_id(new_entity_id).unwrap();
     assert_eq!(entity.name, entity_name);
-    assert_eq!(entity.position, entity_position);
+    assert_eq!(entity.position, expected_position);
     assert_eq!(entity.state, EntityState::Idle);
 }
 
 #[test]
 fn test_world_entity_translate() {
-    let entity_initial_position = Vector2F::new(1.0, 2.0);
+    let entity_initial_position = Vector2F::new(TILE_SIZE, 0.0);
     let translation = Vector2F::new(100.0, 500.0);
 
     let mut world = World::new();
-    let new_entity_id = world.create_entity_npc("Bob", entity_initial_position, Vector2F::new(1.0, 1.0));
+    let new_entity_id = world.create_entity_npc("Bob", entity_initial_position, Vector2F::new(TILE_SIZE, 0.0));
 
     let entity = world.get_entity_by_id_mut(new_entity_id).unwrap();
     entity.position += translation;

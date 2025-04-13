@@ -184,10 +184,10 @@ mod cli_player_client {
                 renderer::State, 
                 AppData
             }, 
-            Client, 
-            ClientHandle
+            MultiplayerClient, 
+            MultiplayerClientHandle
         }, 
-        requests::MoveDirection
+        requests::{ClientRequest, MoveDirection}
         
     };
 
@@ -217,7 +217,7 @@ mod cli_player_client {
     struct App {
         state: Option<State>,
         data: Arc<Mutex<AppData>>,
-        client_handler: Option<ClientHandle>
+        client_handler: Option<MultiplayerClientHandle>
     }
 
     impl ApplicationHandler for App {
@@ -244,7 +244,8 @@ mod cli_player_client {
 
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(async move {
-                        self.client_handler.take().unwrap().wait_until_finished().await.unwrap();
+                        let client_handler = self.client_handler.take().unwrap();
+                        client_handler.join().unwrap()
                     });
                 }
                 WindowEvent::RedrawRequested => {
@@ -277,18 +278,23 @@ mod cli_player_client {
                 },
                 WindowEvent::KeyboardInput { device_id: _, event, is_synthetic: _ } => {
                     if event.state == ElementState::Released {
+                        let client_handler = self.client_handler.as_ref().unwrap();
                         match event.logical_key {
                             Key::Named(winit::keyboard::NamedKey::ArrowUp) => {
-                                self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Up);
+                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Up);
+                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Up} );
                             },
                             Key::Named(winit::keyboard::NamedKey::ArrowRight) => {
-                                self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Right);
+                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Right);
+                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Right} );
                             },
                             Key::Named(winit::keyboard::NamedKey::ArrowDown) => {
-                                self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Down);
+                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Down);
+                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Down} );
                             },
                             Key::Named(winit::keyboard::NamedKey::ArrowLeft) => {
-                                self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Left);
+                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Left);
+                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Left} );
                             },
                             _ => {}
                         }
@@ -300,41 +306,36 @@ mod cli_player_client {
     }
 
 
-    pub fn run<A: tokio::net::ToSocketAddrs + std::fmt::Debug>(addr: A, player_name: &str) {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
-            
-            let event_loop = EventLoop::new().unwrap();
+    pub fn run<A: std::net::ToSocketAddrs + std::fmt::Debug>(addr: A, player_name: &str) {
+        // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
+        
+        let event_loop = EventLoop::new().unwrap();
 
-            // When the current loop iteration finishes, immediately begin a new
-            // iteration regardless of whether or not new events are available to
-            // process. Preferred for applications that want to render as fast as
-            // possible, like games.
-            event_loop.set_control_flow(ControlFlow::Poll);
+        // When the current loop iteration finishes, immediately begin a new
+        // iteration regardless of whether or not new events are available to
+        // process. Preferred for applications that want to render as fast as
+        // possible, like games.
+        event_loop.set_control_flow(ControlFlow::Poll);
 
-            // When the current loop iteration finishes, suspend the thread until
-            // another event arrives. Helps keeping CPU utilization low if nothing
-            // is happening, which is preferred if the application might be idling in
-            // the background.
-            // event_loop.set_control_flow(ControlFlow::Wait);
+        // When the current loop iteration finishes, suspend the thread until
+        // another event arrives. Helps keeping CPU utilization low if nothing
+        // is happening, which is preferred if the application might be idling in
+        // the background.
+        // event_loop.set_control_flow(ControlFlow::Wait);
 
-            let mut app = App {
-                data: Arc::new(Mutex::new(AppData {
-                    scale: 0.5,
-                    ..Default::default()
-                })),
+        let mut app = App {
+            data: Arc::new(Mutex::new(AppData {
+                scale: 0.5,
                 ..Default::default()
-            };
-            
-            let client_handler = Client::connect(addr).await
-                .run(app.data.clone()).await;
+            })),
+            ..Default::default()
+        };
+        
+        let client_handler = MultiplayerClient::connect(addr).unwrap()
+            .run().unwrap();
 
-            app.client_handler = Some(client_handler);
+        app.client_handler = Some(client_handler);
 
-            event_loop.run_app(&mut app).unwrap();
-
-            // client_handler.clone().wait_until_finished().await.unwrap();
-        });
+        event_loop.run_app(&mut app).unwrap();
     }
 }

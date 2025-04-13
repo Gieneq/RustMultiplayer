@@ -25,7 +25,10 @@ pub fn route_client_request(player_id: EntityId, request_str: &str, world: Arc<M
                 match world.lock() {
                     Ok(world_guard) => {
                         let players_count = world_guard.iter_entities().filter(|e| e.is_player()).count();
-                        ClientResponse::Healthcheck { msg: format!("Hello from server! Players active {players_count}.") }
+                        ClientResponse::Healthcheck { 
+                            msg: "Hello from server!".to_string(),
+                            connections: players_count
+                        }
                     },
                     Err(e) => {
                         ClientResponse::OtherError { err: e.to_string() }
