@@ -3,13 +3,13 @@ use serde::{
     Serialize
 };
 
-use crate::game::{
+use crate::{app::server::client_session::{ClientSessionData, ClientSessionId}, game::{
     math::Vector2F, 
     world::{
         Entity, 
         EntityId
     }
-};
+}};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MoveDirection {
@@ -22,9 +22,21 @@ pub enum MoveDirection {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientRequest {
-    GetId,
+    Ping {
+        payload: Option<String>
+    },
+    GetClientSessionId,
+    GetClientSessionData,
+    GetPointsCount,
+    SetName {
+        new_name: String,
+    },
+    SetReady {
+        ready: bool
+    },
+    GetEntityId,
     WorldCheck,
-    Healthcheck,
+    ServerCheck,
     Move {
         dir: MoveDirection
     },
@@ -43,19 +55,38 @@ pub struct EntityCheckData {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientResponse {
-    GetId {
-        id: EntityId
+    Ping {
+        payload: Option<String>
+    },
+    GetClientSessionId {
+        id: ClientSessionId
+    },
+    GetClientSessionData {
+        data: ClientSessionData
+    },
+    GetPointsCount {
+        points_count: u32
+    },
+    SetName {
+        was_set: bool
+    },
+    SetReady {
+        was_set: bool
+    },
+    GetEntityId {
+        id: Option<EntityId>
     },
     WorldCheck {
         entities: Vec<EntityCheckData>
     },
-    Healthcheck {
+    ServerCheck {
         msg: String,
         connections: usize,
     },
     BadRequest {
         err: String
     },
+    BadState,
     OtherError {
         err: String
     },

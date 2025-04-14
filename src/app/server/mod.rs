@@ -30,6 +30,8 @@ pub struct MultiplayerServerHandler {
     client_sessions_handlers: Arc<Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>>,
     main_task_handler: tokio::task::JoinHandle<()>,
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
+    notify_no_connection: Arc<tokio::sync::Notify>,
+    notify_any_connection: Arc<tokio::sync::Notify>,
 }
 
 pub struct MultiplayerServer {
@@ -66,6 +68,12 @@ impl MultiplayerServer {
         
         let client_sessions_handlers_shared = client_sessions_handlers.clone();
 
+        let notify_no_connection = Arc::new(tokio::sync::Notify::new());
+        let notify_no_connection_shared = notify_no_connection.clone();
+
+        let notify_any_connection = Arc::new(tokio::sync::Notify::new());
+        let notify_any_connection_shared = notify_any_connection.clone();
+
         let connection_task_handler = tokio::spawn(async move {
             let mut new_client_session_id= 0;
             loop {
@@ -80,10 +88,16 @@ impl MultiplayerServer {
                             log::debug!("Client session got disconencted {}", client_session_id.id);
 
                             // Move client session
-                            let client_session_handler = {
+                            let (client_session_handler, no_more_clients) = {
                                 let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
-                                client_sessions_handlers_guard.remove(&client_session_id.id)
-                            };                       
+                                let removed_client = client_sessions_handlers_guard.remove(&client_session_id.id);
+                                let no_more_clients = client_sessions_handlers_guard.is_empty();
+                                (removed_client, no_more_clients)
+                            };  
+
+                            if no_more_clients {
+                                notify_no_connection_shared.notify_one();
+                            }                
                             
                             // Await task finish
                             if let Some(client_session_handler) = client_session_handler {
@@ -108,13 +122,17 @@ impl MultiplayerServer {
                             
                             match client_session.run(world_shared_clients.clone(), client_disconnect_tx.clone()) {
                                 Ok(handler) => {
-                                    let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
-                                    client_sessions_handlers_guard.insert(handler.id, handler);
-                                    println!("Appending connection, count={}", client_sessions_handlers_guard.len());
-                                }
+                                    let clients_count = {
+                                        let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
+                                        client_sessions_handlers_guard.insert(handler.id, handler);
+                                        client_sessions_handlers_guard.len()
+                                    };
+                                    notify_any_connection_shared.notify_one();
+                                    println!("Appending connection, count={}", clients_count);
+                                },
                                 Err(e) => {
                                     log::error!("Failed to run client session: {:?}", e);
-                                }
+                                },
                             }
                         }
                     },
@@ -155,6 +173,8 @@ impl MultiplayerServer {
             client_sessions_handlers: client_sessions_handlers_shared,
             main_task_handler,
             shutdown_sender,
+            notify_no_connection,
+            notify_any_connection
         })
     }
 }
@@ -167,6 +187,14 @@ impl MultiplayerServerHandler {
         self.connection_task_handler.await?;
         log::debug!("Server shut down successfully!");
         Ok(())
+    }
+
+    pub async fn await_any_connection(&self) {
+        self.notify_any_connection.notified().await
+    }
+
+    pub async fn await_all_disconnect(&self) {
+        self.notify_no_connection.notified().await
     }
 
     pub fn connections_count(&self) -> usize {
