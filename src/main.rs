@@ -88,7 +88,7 @@ mod cli_server {
             let server_handler = server.run().await.unwrap();
         
             {
-                let mut world = server_handler.world.lock().unwrap();
+                let mut world = server_handler.server_context.world.lock().unwrap();
                 world.create_entity_npc("Tuna", Vector2F::new(5.0, 10.0), Vector2F::new(4.8, 4.8));
                 world.create_entity_npc("Starlette", Vector2F::new(-5.0, 0.0), Vector2F::new(4.8, 4.8));
                 world.create_entity_npc("Bucket", Vector2F::new(5.0, -5.0), Vector2F::new(4.8, 4.8));

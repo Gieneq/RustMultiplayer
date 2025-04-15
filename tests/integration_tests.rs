@@ -1,4 +1,10 @@
-use std::{collections::btree_map::Range, sync::Arc, time::Duration};
+use std::{
+    sync::{
+        Arc, 
+        Mutex
+    }, 
+    time::Duration
+};
 
 use rust_multiplayer::{
     app::{
@@ -10,10 +16,9 @@ use rust_multiplayer::{
     }
 };
 
-async fn run_single_client_test<F, R>(test_fn: F) 
+async fn run_single_client_test<F>(test_fn: F) 
 where
-    F: FnOnce(MultiplayerClientHandle) -> R + Send + 'static,
-    R: std::future::Future<Output = ()> + Send + 'static,
+    F: FnOnce(MultiplayerClientHandle) + Send + 'static,
 {
     let server = MultiplayerServer::bind_any_local().await.unwrap();
     let server_address = server.get_local_address().unwrap();
@@ -21,15 +26,12 @@ where
     assert_eq!(server_handler.connections_count(), 0);
     
     let client_offloaded_task = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async move {
-            let client = MultiplayerClient::connect(server_address).unwrap();
-            let client_handler = client.run().unwrap();
+        let client = MultiplayerClient::connect(server_address).unwrap();
+        let client_handler = client.run().unwrap();
 
-            test_fn(client_handler).await;
+        test_fn(client_handler);
 
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        });
+        std::thread::sleep(Duration::from_millis(10));
     });
     
     server_handler.await_any_connection().await;
@@ -49,13 +51,12 @@ struct MultipleClientsTestCfg {
     end_delay: core::ops::Range<Duration>,
 }
 
-async fn run_multiple_client_test<F, R>(
+async fn run_multiple_client_test<F>(
     multiple_clients_cfg: MultipleClientsTestCfg,
     test_fn: F
 ) 
 where
-    F: Fn(MultiplayerClientHandle) -> R + Send + Sync + 'static,
-    R: std::future::Future<Output = ()> + Send + 'static,
+    F: Fn(MultiplayerClientHandle) + Send + Sync + 'static
 {
     assert!(multiple_clients_cfg.clients_count > 0);
     let server = MultiplayerServer::bind_any_local().await.unwrap();
@@ -73,16 +74,13 @@ where
         let end_delay = rand::random_range(multiple_clients_cfg.end_delay.clone());
 
         let client_offloaded_task = tokio::task::spawn_blocking(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            std::thread::sleep(start_delay);
-            rt.block_on(async move {
-                let client = MultiplayerClient::connect(server_address).unwrap();
-                let client_handler = client.run().unwrap();
-    
-                test_fn_shared(client_handler).await;
-            });
-            std::thread::sleep(end_delay);
+        std::thread::sleep(start_delay);
+            let client = MultiplayerClient::connect(server_address).unwrap();
+            let client_handler = client.run().unwrap();
+
+            test_fn_shared(client_handler);
         });
+        std::thread::sleep(end_delay);
         client_offloaded_tasks.push(client_offloaded_task);
     }
 
@@ -97,18 +95,78 @@ where
 }
 
 
+async fn run_multiple_client_single_final_client_test<F, P>(
+    multiple_clients_cfg: MultipleClientsTestCfg,
+    test_fn: F,
+    test_final_fn: P
+) 
+where
+    F: Fn(MultiplayerClientHandle) + Send + Sync + 'static,
+    P: FnOnce(MultiplayerClientHandle) + Send + Sync + 'static,
+{
+    assert!(multiple_clients_cfg.clients_count > 0);
+    let server = MultiplayerServer::bind_any_local().await.unwrap();
+    let server_address = server.get_local_address().unwrap();
+    let server_handler = server.run().await.unwrap();
+    assert_eq!(server_handler.connections_count(), 0);
+
+    let test_fn = Arc::new(test_fn);
+    
+    let mut client_offloaded_tasks = vec![];
+
+    // Spawn multiple clients
+    for _ in 0..multiple_clients_cfg.clients_count {
+        let test_fn_shared = test_fn.clone();
+        let start_delay = rand::random_range(multiple_clients_cfg.start_delay.clone());
+        let end_delay = rand::random_range(multiple_clients_cfg.end_delay.clone());
+
+        let client_offloaded_task = tokio::task::spawn_blocking(move || {
+            std::thread::sleep(start_delay);
+            let client = MultiplayerClient::connect(server_address).unwrap();
+            let client_handler = client.run().unwrap();
+
+            test_fn_shared(client_handler);
+            std::thread::sleep(end_delay);
+        });
+        client_offloaded_tasks.push(client_offloaded_task);
+    }
+
+    for client_offloaded_task in client_offloaded_tasks {
+        client_offloaded_task.await.unwrap();
+    }
+
+    server_handler.await_all_disconnect().await;
+    assert_eq!(server_handler.connections_count(), 0, "Client not disconnected");
+
+    // Spawn final client
+    let client_offloaded_task = tokio::task::spawn_blocking(move || {
+        let client = MultiplayerClient::connect(server_address).unwrap();
+        let client_handler = client.run().unwrap();
+
+        test_final_fn(client_handler);
+
+        std::thread::sleep(Duration::from_millis(10));
+    });
+
+    client_offloaded_task.await.unwrap();
+
+    server_handler.await_all_disconnect().await;
+    assert_eq!(server_handler.connections_count(), 0, "Client not disconnected");
+
+    server_handler.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn test_client_connect_disconnect_on_their_own() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let response = client_handler.make_request_with_timeout(ClientRequest::ServerCheck, None).unwrap();
         matches!(response, ClientResponse::ServerCheck { msg: _, connections: 1 });
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }).await;
 }
 
 #[tokio::test]
 async fn test_client_common_read_only_requests() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
         match response {
             ClientResponse::GetClientSessionData { data } => {
@@ -138,14 +196,12 @@ async fn test_client_common_read_only_requests() {
             ClientResponse::Move { started } => assert!(!started),
             _ => panic!("Bad response"),
         }
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }).await;
 }
 
 #[tokio::test]
 async fn test_client_set_name() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
     let name_to_be_set = "Famcyname101";
         let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
         match response {
@@ -174,14 +230,12 @@ async fn test_client_set_name() {
             },
             _ => panic!("Bad response"),
         }
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }).await;
 }
 
 #[tokio::test]
 async fn test_client_set_ready() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let name_to_be_set = "Famcyname101";
         let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: Some(name_to_be_set.to_string()) }, None).unwrap();
         match response {
@@ -208,24 +262,20 @@ async fn test_client_set_ready() {
             },
             _ => panic!("Bad response"),
         }
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }).await;
 }
 
 #[tokio::test]
 async fn test_client_ping_server() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let ping_result = client_handler.ping(10, Duration::from_micros(500), None, Duration::from_millis(10));
         println!("{:?}", ping_result);
-
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }).await;
 }
 
 #[tokio::test]
 async fn test_new_client_has_no_points() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let response = client_handler.make_request_with_timeout(ClientRequest::GetPointsCount, None).unwrap();
         match response {
             ClientResponse::GetPointsCount { points_count } => {
@@ -238,7 +288,7 @@ async fn test_new_client_has_no_points() {
 
 #[tokio::test]
 async fn test_client_gets_generated_name() {
-    run_single_client_test(|client_handler| async move {
+    run_single_client_test(|client_handler| {
         let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: None }, None).unwrap();
         match response {
             ClientResponse::SetName { result } => {
@@ -270,8 +320,7 @@ async fn test_multiple_clients() {
         end_delay: Duration::from_micros(0)..Duration::from_micros(2),
     };
 
-    run_multiple_client_test(config, |client_handler| async move {
-
+    run_multiple_client_test(config, |client_handler| {
         let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: None }, None).unwrap();
         match response {
             ClientResponse::SetName { result } => {
@@ -295,8 +344,78 @@ async fn test_multiple_clients() {
                 assert_eq!(points_count, 0);
             },
             _ => panic!("Bad response"),
-        }
+        };
     }).await;
+}
+
+#[tokio::test]
+async fn test_multiple_clients_chatting() {
+    const CLIENTS_COUNT: usize = 10;
+    let config = MultipleClientsTestCfg {
+        clients_count: CLIENTS_COUNT,
+        start_delay: Duration::from_micros(0)..Duration::from_micros(2),
+        end_delay: Duration::from_micros(0)..Duration::from_micros(2),
+    };
+
+    let counter = Arc::new(Mutex::new(0));
+    let counter_shared = counter.clone();
+
+    let per_client_test_fn = move |client_handler: MultiplayerClientHandle| {
+        let counter_shared_clone = counter_shared.clone();
+        let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: None }, None).unwrap();
+        match response {
+            ClientResponse::SetName { result } => {
+                assert!(result.is_ok());
+            },
+            _ => panic!("Bad response"),
+        }
+
+        let this_counter = {
+            let mut guard = counter_shared_clone.lock().unwrap();
+            *guard += 1;
+            *guard
+        };
+
+        let response = client_handler.make_request_with_timeout(ClientRequest::SendChatMessage { msg: format!("Hello message '{this_counter}'!") }, None).unwrap();
+        match response {
+            ClientResponse::SendChatMessage { sent } => {
+                assert!(sent);
+            },
+            _ => panic!("Bad response"),
+        }
+
+        println!("Client test_fn ran. Counter: {}", this_counter);
+    };
+
+    run_multiple_client_single_final_client_test(
+        config, 
+        per_client_test_fn,
+        |final_client_handler| {
+            let response = final_client_handler.make_request_with_timeout(ClientRequest::ReadChatMessages { max_count: None }, None).unwrap();
+            match response {
+                ClientResponse::ReadChatMessages { results } => {
+                    assert!(results.len() > CLIENTS_COUNT);
+
+                    for msg in results {
+                        println!("{msg}");
+                    }
+                },
+                _ => panic!("Bad response"),
+            }
+
+            let expected_messages = 3;
+            assert!(expected_messages < CLIENTS_COUNT);
+            let response = final_client_handler.make_request_with_timeout(ClientRequest::ReadChatMessages { max_count: Some(expected_messages) }, None).unwrap();
+            match response {
+                ClientResponse::ReadChatMessages { results } => {
+                    assert_eq!(results.len(), expected_messages);
+                },
+                _ => panic!("Bad response"),
+            }
+        }
+    ).await;
+
+    assert_eq!(*counter.lock().unwrap(), CLIENTS_COUNT);
 }
 
 #[tokio::test]

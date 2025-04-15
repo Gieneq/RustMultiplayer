@@ -3,16 +3,18 @@ use std::sync::{
     Mutex
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, 
+    Serialize
+};
 use tokio::io::{
-    AsyncBufReadExt, AsyncWriteExt
+    AsyncBufReadExt, 
+    AsyncWriteExt
 };
 
-use crate::game::{
-    math::Vector2F, 
-    world::{
-        self, EntityId, World
-    }
+use crate::game::world::{
+    EntityId, 
+    World
 };
 
 use super::MultiplayerServerContext;

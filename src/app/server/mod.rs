@@ -1,14 +1,22 @@
 pub mod client_session;
 pub mod routes;
+pub mod chat;
 
 use std::{
-    collections::HashMap, sync::{
+    collections::HashMap, 
+    sync::{
         Arc, 
         Mutex
-    }, time::Duration
+    }, 
+    time::Duration
 };
 
-use client_session::{ClientSession, ClientSessionDisconnectEvent, ClientSessionId};
+use chat::ChatMessage;
+use client_session::{
+    ClientSession, 
+    ClientSessionDisconnectEvent, 
+    ClientSessionId
+};
 
 use crate::game::world::World;
 
@@ -25,9 +33,8 @@ pub enum MultiplayerServerError {
 }
 
 pub struct MultiplayerServerHandler {
-    pub world: Arc<Mutex<World>>,
     connection_task_handler: tokio::task::JoinHandle<()>,
-    server_context: Arc<MultiplayerServerContext>,
+    pub server_context: Arc<MultiplayerServerContext>,
     main_task_handler: tokio::task::JoinHandle<()>,
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
     notify_no_connection: Arc<tokio::sync::Notify>,
@@ -36,6 +43,11 @@ pub struct MultiplayerServerHandler {
 
 pub struct MultiplayerServerContext {
     pub client_sessions_handlers: Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>,
+
+    // Can exist all the time, but will be empty if players are in Lobby
+    pub world: Arc<Mutex<World>>,
+
+    pub chat: Mutex<Vec<ChatMessage>>
 }
 
 pub struct MultiplayerServer {
@@ -70,9 +82,12 @@ impl MultiplayerServer {
         let (client_disconnect_tx, mut client_disconnect_rx) = tokio::sync::mpsc::channel::<ClientSessionDisconnectEvent>(32);
         
         let server_context = Arc::new(MultiplayerServerContext {
-            client_sessions_handlers: Mutex::new(HashMap::new())
+            client_sessions_handlers: Mutex::new(HashMap::new()),
+            world: world.clone(),
+            chat: Mutex::new(Vec::default()),
         });
         let server_context_shared = server_context.clone();
+        server_context_shared.chat.lock().unwrap().push(ChatMessage::new_from_server("Message of the day 'Pizza!'".to_string()));
 
         let notify_no_connection = Arc::new(tokio::sync::Notify::new());
         let notify_no_connection_shared = notify_no_connection.clone();
@@ -174,7 +189,6 @@ impl MultiplayerServer {
         });
 
         Ok(MultiplayerServerHandler {
-            world,
             connection_task_handler,
             server_context,
             main_task_handler,
@@ -237,7 +251,7 @@ mod tests {
         let server_handler = server.run().await.unwrap();
     
         {
-            let mut world = server_handler.world.lock().unwrap();
+            let mut world = server_handler.server_context.world.lock().unwrap();
             world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));
         }
     

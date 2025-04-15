@@ -3,13 +3,19 @@ use serde::{
     Serialize
 };
 
-use crate::{app::server::client_session::{ClientSessionData, ClientSessionId}, game::{
-    math::Vector2F, 
-    world::{
-        Entity, 
-        EntityId
+use crate::{
+    app::server::client_session::{
+        ClientSessionData, 
+        ClientSessionId
+    }, 
+    game::{
+        math::Vector2F, 
+        world::{
+            Entity, 
+            EntityId
+        }
     }
-}};
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum MoveDirection {
@@ -24,6 +30,12 @@ pub enum MoveDirection {
 pub enum ClientRequest {
     Ping {
         payload: Option<String>
+    },
+    SendChatMessage {
+        msg: String,
+    },
+    ReadChatMessages {
+        max_count: Option<usize>
     },
     GetClientSessionId,
     GetClientSessionData,
@@ -64,6 +76,12 @@ pub enum SetNameError {
 pub enum ClientResponse {
     Ping {
         payload: Option<String>
+    },
+    SendChatMessage {
+        sent: bool
+    },
+    ReadChatMessages {
+        results: Vec<String>,
     },
     GetClientSessionId {
         id: ClientSessionId

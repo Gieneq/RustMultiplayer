@@ -4,7 +4,7 @@ use rand::{seq::IndexedRandom, Rng};
 
 use crate::{game::{math::Vector2F, world::{self, World}}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError}};
 
-use super::{client_session::{ClientSessionData, ClientSessionId, ClientSessionState, GameplayState}, MultiplayerServerContext};
+use super::{chat::ChatMessage, client_session::{ClientSessionData, ClientSessionId, ClientSessionState, GameplayState}, MultiplayerServerContext};
 
 pub fn route_client_request(
     server_context: Arc<MultiplayerServerContext>,
@@ -17,6 +17,12 @@ pub fn route_client_request(
         Ok(req) => match req {
             ClientRequest::Ping { payload} => {
                 ClientResponse::Ping{payload}
+            },
+            ClientRequest::ReadChatMessages { max_count } => {
+                read_chat_messages_route(max_count, server_context)
+            },
+            ClientRequest::SendChatMessage { msg } => {
+                send_message_route(msg, client_session_id, clieant_session_data, server_context)
             },
             ClientRequest::GetClientSessionId => {
                 ClientResponse::GetClientSessionId { id: client_session_id }
@@ -201,6 +207,66 @@ fn set_name_route(
                 ClientResponse::SetName { result: Ok(()) }
             } else {
                 ClientResponse::BadState
+            }
+        },
+        Err(e) => ClientResponse::OtherError { err: e.to_string() }
+    }
+}
+
+fn send_message_route(
+    msg: String, 
+    client_session_id: ClientSessionId, 
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+    server_context: Arc<MultiplayerServerContext>
+) -> ClientResponse {
+    let message  = match clieant_session_data.lock() {
+        Ok(sesssion_data_guard) => {
+            if let Some(name) = sesssion_data_guard.get_name() {
+                ChatMessage::new_from_client(msg, client_session_id, name.to_string())
+            } else {
+                return ClientResponse::SendChatMessage { sent: false };
+            }
+        },
+        Err(e) => {
+            return ClientResponse::OtherError { err: e.to_string() }; 
+        },
+    };
+
+    match server_context.chat.lock() {
+        Ok(mut server_context_guard) => {
+            server_context_guard.push(message);
+            ClientResponse::SendChatMessage { sent: true }
+        },
+        Err(e) => {
+            ClientResponse::OtherError { err: e.to_string() }
+        }
+    }
+}
+
+fn read_chat_messages_route(
+    max_count: Option<usize>,
+    server_context: Arc<MultiplayerServerContext>
+) -> ClientResponse {
+    match server_context.chat.lock() {
+        Ok(server_context_guard) => {
+            if server_context_guard.is_empty() {
+                ClientResponse::ReadChatMessages { results: vec![] }
+            } else {
+                let elements_count = if let Some(max_count) = max_count {
+                    max_count.min(server_context_guard.len())
+                } else {
+                    server_context_guard.len()
+                };
+
+                // Get last messages
+                let results = server_context_guard
+                    .iter()
+                    .rev()
+                    .take(elements_count)
+                    .map(ToString::to_string)
+                    .collect();
+
+                ClientResponse::ReadChatMessages { results }
             }
         },
         Err(e) => {
