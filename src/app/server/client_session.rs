@@ -15,6 +15,8 @@ use crate::game::{
     }
 };
 
+use super::MultiplayerServerContext;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClientSessionError {
 
@@ -82,12 +84,14 @@ impl ClientSession {
     }
 
     fn on_client_request(
+        server_context: Arc<MultiplayerServerContext>,
         client_session_id: ClientSessionId, 
         session_data: Arc<Mutex<ClientSessionData>>,
         request: &str, world: Arc<Mutex<World>>
     ) -> String {
         // 'request' line is trimmed already
         super::routes::route_client_request(
+            server_context,
             client_session_id, 
             session_data,
             request, 
@@ -101,6 +105,7 @@ impl ClientSession {
 
     async fn process_client_connection(
         &mut self, 
+        server_context: Arc<MultiplayerServerContext>,
         session_data: Arc<Mutex<ClientSessionData>>,
         world: Arc<Mutex<World>>,
         session_disconnect_tx: tokio::sync::mpsc::Sender<ClientSessionDisconnectEvent>
@@ -125,6 +130,7 @@ impl ClientSession {
                     log::debug!("Client send line: '{}'", line);
 
                     let mut response = Self::on_client_request(
+                        server_context.clone(),
                         self.id, 
                         session_data.clone(),
                         line, 
@@ -160,6 +166,7 @@ impl ClientSession {
 
     pub fn run(
         mut self, 
+        server_context: Arc<MultiplayerServerContext>,
         world: Arc<Mutex<World>>,
         session_disconnect_tx: tokio::sync::mpsc::Sender<ClientSessionDisconnectEvent>
     ) -> Result<ClientSessionHandler, ClientSessionError> {
@@ -170,7 +177,12 @@ impl ClientSession {
 
         let session_data_shared = session_data.clone();
         let client_session_handler = tokio::spawn(async move {
-            self.process_client_connection(session_data_shared, world, session_disconnect_tx).await
+            self.process_client_connection(
+                server_context, 
+                session_data_shared, 
+                world, 
+                session_disconnect_tx
+            ).await
         });
 
         Ok(ClientSessionHandler {

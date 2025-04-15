@@ -1,10 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use crate::{game::{math::Vector2F, world::{self, World}}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection}};
+use rand::{seq::IndexedRandom, Rng};
 
-use super::client_session::{ClientSessionData, ClientSessionId, ClientSessionState, GameplayState};
+use crate::{game::{math::Vector2F, world::{self, World}}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError}};
+
+use super::{client_session::{ClientSessionData, ClientSessionId, ClientSessionState, GameplayState}, MultiplayerServerContext};
 
 pub fn route_client_request(
+    server_context: Arc<MultiplayerServerContext>,
     client_session_id: ClientSessionId, 
     clieant_session_data: Arc<Mutex<ClientSessionData>>,
     request_str: &str, 
@@ -39,23 +42,7 @@ pub fn route_client_request(
                 }
             },
             ClientRequest::SetName { new_name } => {
-                if new_name.is_empty() {
-                    ClientResponse::SetName { was_set: false }
-                } else {
-                    match clieant_session_data.lock() {
-                        Ok(mut sessiod_data_guard) => {
-                            if sessiod_data_guard.state == ClientSessionState::JustConnected {
-                                sessiod_data_guard.state = ClientSessionState::NameWasSet { name: new_name, gameplay_state: GameplayState::Lobby { ready: false } };
-                                ClientResponse::SetName { was_set: true }
-                            } else {
-                                ClientResponse::BadState
-                            }
-                        },
-                        Err(e) => {
-                            ClientResponse::OtherError { err: e.to_string() }
-                        }
-                    }
-                }
+                set_name_route(server_context, clieant_session_data, new_name)
             },
             ClientRequest::SetReady { ready: set_to_ready } => {
                 match clieant_session_data.lock() {
@@ -156,4 +143,68 @@ pub fn route_client_request(
     };
 
     serde_json::to_string(&response).expect("Could not serialize response")
+}
+
+fn try_generate_name(server_context: Arc<MultiplayerServerContext>) -> Option<String> {
+    const MAX_RETRIES_COUNT: usize = 100;
+    const CORE_NAMES:[&str;5] = [
+        "Beaver",
+        "Goose",
+        "Horse",
+        "Pig",
+        "Cat"
+    ];
+
+    let mut exhaust_counter = 0;
+    let mut rng = rand::rng();
+    loop {
+        exhaust_counter += 1;
+        let core_name = CORE_NAMES.choose(&mut rng).unwrap();
+        let name_num: i32 = rng.random_range(0..255);
+        let new_name = format!("{core_name}_{name_num}");
+    
+        if !server_context.is_name_used(&new_name) {
+            return Some(new_name);
+        } 
+        
+        if exhaust_counter > MAX_RETRIES_COUNT {
+            break;
+        }
+    }
+
+    None
+}
+
+fn set_name_route(
+    server_context: Arc<MultiplayerServerContext>,
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+    new_name: Option<String>
+) -> ClientResponse {
+    let new_name = if let Some(new_name) = new_name {
+        if new_name.is_empty() {
+            return ClientResponse::SetName { result: Err(SetNameError::NameEmpty) };
+        } else if server_context.is_name_used(&new_name) {
+            return ClientResponse::SetName { result: Err(SetNameError::NameAlreadyUsed) };
+        } else {
+            new_name
+        }
+    } else if let Some(new_name) = try_generate_name(server_context) {
+        new_name
+    } else {
+        return ClientResponse::SetName { result: Err(SetNameError::NameGenerateExhausted) };
+    };
+
+    match clieant_session_data.lock() {
+        Ok(mut sessiod_data_guard) => {
+            if sessiod_data_guard.state == ClientSessionState::JustConnected {
+                sessiod_data_guard.state = ClientSessionState::NameWasSet { name: new_name, gameplay_state: GameplayState::Lobby { ready: false } };
+                ClientResponse::SetName { result: Ok(()) }
+            } else {
+                ClientResponse::BadState
+            }
+        },
+        Err(e) => {
+            ClientResponse::OtherError { err: e.to_string() }
+        }
+    }
 }

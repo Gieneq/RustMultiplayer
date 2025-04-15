@@ -114,10 +114,10 @@ async fn test_client_set_name() {
                 _ => panic!("Bad response"),
             }
 
-            let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: name_to_be_set.to_string() }, None).unwrap();
+            let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: Some(name_to_be_set.to_string()) }, None).unwrap();
             match response {
-                ClientResponse::SetName { was_set } => {
-                    assert!(was_set);
+                ClientResponse::SetName { result } => {
+                    assert!(result.is_ok());
                 },
                 _ => panic!("Bad response"),
             }
@@ -157,10 +157,10 @@ async fn test_client_set_ready() {
             let client = MultiplayerClient::connect(server_address).unwrap();
             let client_handler = client.run().unwrap();
 
-            let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: name_to_be_set.to_string() }, None).unwrap();
+            let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: Some(name_to_be_set.to_string()) }, None).unwrap();
             match response {
-                ClientResponse::SetName { was_set } => {
-                    assert!(was_set);
+                ClientResponse::SetName { result } => {
+                    assert!(result.is_ok());
                 },
                 _ => panic!("Bad response"),
             }
@@ -235,6 +235,50 @@ async fn test_new_client_has_no_points() {
             match response {
                 ClientResponse::GetPointsCount { points_count } => {
                     assert_eq!(points_count, 0);
+                },
+                _ => panic!("Bad response"),
+            }
+
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        });
+    });
+    
+    server_handler.await_any_connection().await;
+    server_handler.await_all_disconnect().await;
+
+    client_thread.join().unwrap();
+    server_handler.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_client_gets_generated_name() {
+    let server = MultiplayerServer::bind_any_local().await.unwrap();
+    let server_address = server.get_local_address().unwrap();
+    let server_handler = server.run().await.unwrap();
+
+    let client_thread = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            let client = MultiplayerClient::connect(server_address).unwrap();
+            let client_handler = client.run().unwrap();
+
+            let response = client_handler.make_request_with_timeout(ClientRequest::SetName { new_name: None }, None).unwrap();
+            match response {
+                ClientResponse::SetName { result } => {
+                    assert!(result.is_ok());
+                },
+                _ => panic!("Bad response"),
+            }
+
+            let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
+            match response {
+                ClientResponse::GetClientSessionData { data } => match data.state {
+                    ClientSessionState::NameWasSet { name, gameplay_state } => {
+                        assert!(matches!(gameplay_state, GameplayState::Lobby { ready: _ }));
+                        assert!(!name.is_empty());
+                        println!("{name}");
+                    },
+                    _ => panic!("Bad state"),
                 },
                 _ => panic!("Bad response"),
             }

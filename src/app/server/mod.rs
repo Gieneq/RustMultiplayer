@@ -27,11 +27,15 @@ pub enum MultiplayerServerError {
 pub struct MultiplayerServerHandler {
     pub world: Arc<Mutex<World>>,
     connection_task_handler: tokio::task::JoinHandle<()>,
-    client_sessions_handlers: Arc<Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>>,
+    server_context: Arc<MultiplayerServerContext>,
     main_task_handler: tokio::task::JoinHandle<()>,
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
     notify_no_connection: Arc<tokio::sync::Notify>,
     notify_any_connection: Arc<tokio::sync::Notify>,
+}
+
+pub struct MultiplayerServerContext {
+    pub client_sessions_handlers: Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>,
 }
 
 pub struct MultiplayerServer {
@@ -63,10 +67,12 @@ impl MultiplayerServer {
         let (shutdown_sender, mut shutdown_receiver) = tokio::sync::oneshot::channel();
         let (shutdown_server_sender, mut shutdown_server_receiver) = tokio::sync::oneshot::channel();
 
-        let client_sessions_handlers: Arc<Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>> = Arc::new(Mutex::new(HashMap::new()));
         let (client_disconnect_tx, mut client_disconnect_rx) = tokio::sync::mpsc::channel::<ClientSessionDisconnectEvent>(32);
         
-        let client_sessions_handlers_shared = client_sessions_handlers.clone();
+        let server_context = Arc::new(MultiplayerServerContext {
+            client_sessions_handlers: Mutex::new(HashMap::new())
+        });
+        let server_context_shared = server_context.clone();
 
         let notify_no_connection = Arc::new(tokio::sync::Notify::new());
         let notify_no_connection_shared = notify_no_connection.clone();
@@ -89,7 +95,7 @@ impl MultiplayerServer {
 
                             // Move client session
                             let (client_session_handler, no_more_clients) = {
-                                let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
+                                let mut client_sessions_handlers_guard = server_context_shared.client_sessions_handlers.lock().expect("Locking failed");
                                 let removed_client = client_sessions_handlers_guard.remove(&client_session_id.id);
                                 let no_more_clients = client_sessions_handlers_guard.is_empty();
                                 (removed_client, no_more_clients)
@@ -120,10 +126,10 @@ impl MultiplayerServer {
 
                             let client_session = ClientSession::new(connection, assigned_client_session_id);
                             
-                            match client_session.run(world_shared_clients.clone(), client_disconnect_tx.clone()) {
+                            match client_session.run(server_context_shared.clone(), world_shared_clients.clone(), client_disconnect_tx.clone()) {
                                 Ok(handler) => {
                                     let clients_count = {
-                                        let mut client_sessions_handlers_guard = client_sessions_handlers.lock().expect("Locking failed");
+                                        let mut client_sessions_handlers_guard = server_context_shared.client_sessions_handlers.lock().expect("Locking failed");
                                         client_sessions_handlers_guard.insert(handler.id, handler);
                                         client_sessions_handlers_guard.len()
                                     };
@@ -170,7 +176,7 @@ impl MultiplayerServer {
         Ok(MultiplayerServerHandler {
             world,
             connection_task_handler,
-            client_sessions_handlers: client_sessions_handlers_shared,
+            server_context,
             main_task_handler,
             shutdown_sender,
             notify_no_connection,
@@ -198,8 +204,15 @@ impl MultiplayerServerHandler {
     }
 
     pub fn connections_count(&self) -> usize {
-        let client_sessions_handlers_guard = self.client_sessions_handlers.lock().expect("Locking failed");
+        let client_sessions_handlers_guard = self.server_context.client_sessions_handlers.lock().expect("Locking failed");
         client_sessions_handlers_guard.len()
+    }
+}
+
+impl MultiplayerServerContext {
+    pub fn is_name_used(&self, name: &str) -> bool {
+        let guard = self.client_sessions_handlers.lock().expect("Mutex poisoned");
+        guard.iter().any(|(_, v)| v.data.lock().expect("Mutex poisoned").get_name() == Some(name))
     }
 }
 

@@ -29,7 +29,7 @@ pub enum ClientRequest {
     GetClientSessionData,
     GetPointsCount,
     SetName {
-        new_name: String,
+        new_name: Option<String>,
     },
     SetReady {
         ready: bool
@@ -53,6 +53,13 @@ pub struct EntityCheckData {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum SetNameError {
+    NameEmpty,
+    NameAlreadyUsed,
+    NameGenerateExhausted,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientResponse {
     Ping {
@@ -68,7 +75,7 @@ pub enum ClientResponse {
         points_count: u32
     },
     SetName {
-        was_set: bool
+        result: Result<(), SetNameError>
     },
     SetReady {
         was_set: bool
