@@ -90,7 +90,7 @@ impl MultiplayerServer {
                     },
                     client_session_id = client_disconnect_rx.recv() => {
                         if let Some(client_session_id) = client_session_id {
-                            println!("Disconnection client id={}.", client_session_id.id);
+                            println!("[{:?}] Disconnection client id={}.", std::time::Instant::now(), client_session_id.id);
                             log::debug!("Client session got disconencted {}", client_session_id.id);
 
                             // Move client session
@@ -134,7 +134,7 @@ impl MultiplayerServer {
                                         client_sessions_handlers_guard.len()
                                     };
                                     notify_any_connection_shared.notify_one();
-                                    println!("Appending connection, count={}", clients_count);
+                                    println!("[{:?}] Appending connection {}, count={}", std::time::Instant::now(), assigned_client_session_id, clients_count);
                                 },
                                 Err(e) => {
                                     log::error!("Failed to run client session: {:?}", e);
