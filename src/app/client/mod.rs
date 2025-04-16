@@ -183,8 +183,7 @@ impl MultiplayerClientHandle {
         self.make_request_with_timeout(req, Some(Duration::from_millis(COMMON_TIMEOUT_MILLIS)))
     }
 
-    // TODO rename
-    pub fn join(self) -> std::thread::Result<()> {
+    pub fn wait_until_finished(self) -> std::thread::Result<()> {
         self.thread_handle.join()
     }
     
@@ -193,6 +192,6 @@ impl MultiplayerClientHandle {
             log::warn!("Couldnt send shutdown signal, rason {e}");
         }
         unimplemented!("blah");
-        self.join()
+        self.wait_until_finished()
     }
 }

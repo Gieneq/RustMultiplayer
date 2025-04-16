@@ -24,23 +24,14 @@ pub enum ClientSessionError {
 
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy,PartialEq)]
-pub enum GameplayState {
-    Lobby {
-        ready: bool,
-    },
-    Ingame {
-        entity_player_id: EntityId,
-    },
-}
-
 #[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ClientSessionState {
     #[default]
     JustConnected,
     NameWasSet {
         name: String,
-        gameplay_state: GameplayState
+        ready_to_start: bool,
+        entity_player_id: Option<EntityId>,
     },
 }
 
@@ -89,15 +80,14 @@ impl ClientSession {
         server_context: Arc<MultiplayerServerContext>,
         client_session_id: ClientSessionId, 
         session_data: Arc<Mutex<ClientSessionData>>,
-        request: &str, world: Arc<Mutex<World>>
+        request: &str
     ) -> String {
         // 'request' line is trimmed already
         super::routes::route_client_request(
             server_context,
             client_session_id, 
             session_data,
-            request, 
-            world
+            request
         )
     }
 
@@ -109,7 +99,6 @@ impl ClientSession {
         &mut self, 
         server_context: Arc<MultiplayerServerContext>,
         session_data: Arc<Mutex<ClientSessionData>>,
-        world: Arc<Mutex<World>>,
         session_disconnect_tx: tokio::sync::mpsc::Sender<ClientSessionDisconnectEvent>
     ) {
         log::info!("Processing client id={} connection: {:?}", self.id, self.address);
@@ -120,11 +109,9 @@ impl ClientSession {
         let mut line_buff = String::new();
 
         loop {
-            let cloned_world = world.clone();
             match buf_reader.read_line(&mut line_buff).await {
                 Ok(0) => {
                     log::debug!("Client finished connection");
-                    log::info!("Client see world: {:?}", cloned_world);
                     break;
                 },
                 Ok(_) => {
@@ -136,7 +123,6 @@ impl ClientSession {
                         self.id, 
                         session_data.clone(),
                         line, 
-                        cloned_world
                     );
                     log::debug!("Response with: '{}'", response);
 
@@ -169,7 +155,6 @@ impl ClientSession {
     pub fn run(
         mut self, 
         server_context: Arc<MultiplayerServerContext>,
-        world: Arc<Mutex<World>>,
         session_disconnect_tx: tokio::sync::mpsc::Sender<ClientSessionDisconnectEvent>
     ) -> Result<ClientSessionHandler, ClientSessionError> {
         let client_session_id = self.id;
@@ -182,7 +167,6 @@ impl ClientSession {
             self.process_client_connection(
                 server_context, 
                 session_data_shared, 
-                world, 
                 session_disconnect_tx
             ).await
         });
@@ -195,27 +179,18 @@ impl ClientSession {
     }
 }
 
-impl Default for GameplayState {
-    fn default() -> Self {
-        Self::Lobby { ready: false }
-    }
-}
-
 impl ClientSessionData {
     pub fn get_entity_player_id(&self) -> Option<EntityId> {
         match &self.state {
             ClientSessionState::JustConnected => None,
-            ClientSessionState::NameWasSet { name: _, gameplay_state } => match gameplay_state {
-                GameplayState::Lobby {ready: _} => None,
-                GameplayState::Ingame { entity_player_id } => Some(*entity_player_id),
-            },
+            ClientSessionState::NameWasSet { name: _, ready_to_start: _, entity_player_id } => *entity_player_id,
         }
     }
 
     pub fn get_name(&self) -> Option<&str> {
         match &self.state {
             ClientSessionState::JustConnected => None,
-            ClientSessionState::NameWasSet { name, gameplay_state: _ } => Some(name.as_str()),
+            ClientSessionState::NameWasSet { name, ready_to_start: _, entity_player_id: _ } => Some(name.as_str()),
         }
     }
 }

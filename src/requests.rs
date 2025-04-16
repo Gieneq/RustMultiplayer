@@ -4,10 +4,10 @@ use serde::{
 };
 
 use crate::{
-    app::server::client_session::{
+    app::server::{client_session::{
         ClientSessionData, 
         ClientSessionId
-    }, 
+    }, GameplayState}, 
     game::{
         math::Vector2F, 
         world::{
@@ -23,6 +23,23 @@ pub enum MoveDirection {
     Down,
     Left,
     Right,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum GameplayStateBrief {
+    Lobby {
+        counting_to_start: Option<u32>,
+    },
+    GameRunning,
+}
+
+impl From<&GameplayState> for GameplayStateBrief {
+    fn from(value: &GameplayState) -> Self {
+        match value {
+            GameplayState::Lobby { counting_to_start: counting } => GameplayStateBrief::Lobby { counting_to_start: *counting },
+            GameplayState::GameRunning { world: _ } => GameplayStateBrief::GameRunning,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +66,7 @@ pub enum ClientRequest {
     GetEntityId,
     WorldCheck,
     ServerCheck,
+    CheckGameplayState,
     Move {
         dir: MoveDirection
     },
@@ -107,6 +125,9 @@ pub enum ClientResponse {
     ServerCheck {
         msg: String,
         connections: usize,
+    },
+    CheckGameplayState {
+        state: GameplayStateBrief
     },
     BadRequest {
         err: String

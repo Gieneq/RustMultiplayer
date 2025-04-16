@@ -2,16 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use rand::{seq::IndexedRandom, Rng};
 
-use crate::{game::{math::Vector2F, world::{self, World}}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError}};
+use crate::{game::{math::Vector2F, world}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError}};
 
-use super::{chat::ChatMessage, client_session::{ClientSessionData, ClientSessionId, ClientSessionState, GameplayState}, MultiplayerServerContext};
+use super::{chat::ChatMessage, client_session::{ClientSessionData, ClientSessionId, ClientSessionState}, MultiplayerServerContext};
 
 pub fn route_client_request(
     server_context: Arc<MultiplayerServerContext>,
     client_session_id: ClientSessionId, 
     clieant_session_data: Arc<Mutex<ClientSessionData>>,
-    request_str: &str, 
-    world: Arc<Mutex<World>>
+    request_str: &str
 ) -> String {
     let response: ClientResponse = match serde_json::from_str::<ClientRequest>(request_str) {
         Ok(req) => match req {
@@ -28,122 +27,35 @@ pub fn route_client_request(
                 ClientResponse::GetClientSessionId { id: client_session_id }
             },
             ClientRequest::GetPointsCount => {
-                match clieant_session_data.lock() {
-                    Ok(sessiod_data_guard) => {
-                        ClientResponse::GetPointsCount { points_count: sessiod_data_guard.points }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                let sessiod_data_guard = clieant_session_data.lock().unwrap();
+                ClientResponse::GetPointsCount { points_count: sessiod_data_guard.points }
             },
             ClientRequest::GetClientSessionData => {
-                match clieant_session_data.lock() {
-                    Ok(sessiod_data_guard) => {
-                        ClientResponse::GetClientSessionData { data: sessiod_data_guard.clone() }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                let sessiod_data_guard = clieant_session_data.lock().unwrap();
+                ClientResponse::GetClientSessionData { data: sessiod_data_guard.clone() }
             },
             ClientRequest::SetName { new_name } => {
                 set_name_route(server_context, clieant_session_data, new_name)
             },
             ClientRequest::SetReady { ready: set_to_ready } => {
-                match clieant_session_data.lock() {
-                    Ok(mut sessiod_data_guard) => {
-                        match &mut sessiod_data_guard.state {
-                            ClientSessionState::JustConnected => {
-                                ClientResponse::BadState
-                            },
-                            ClientSessionState::NameWasSet { name: _, gameplay_state } => match gameplay_state {
-                                GameplayState::Lobby { ready } => {
-                                    // set ready
-                                    *ready = set_to_ready;
-                                    ClientResponse::SetReady { was_set: set_to_ready }
-                                },
-                                GameplayState::Ingame { entity_player_id: _ } => ClientResponse::BadState,
-                            },
-                        }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                set_ready_route(set_to_ready, clieant_session_data)
             },
             ClientRequest::GetEntityId => {
-                match clieant_session_data.lock() {
-                    Ok(sessiod_data_guard) => {
-                        let entity_player_id = sessiod_data_guard.get_entity_player_id();
-                        ClientResponse::GetEntityId { id: entity_player_id }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                let sessiod_data_guard = clieant_session_data.lock().unwrap();
+                ClientResponse::GetEntityId { id: sessiod_data_guard.get_entity_player_id() }
             },
             ClientRequest::WorldCheck => {
-                match world.lock() {
-                    Ok(world_guard) => {
-                        ClientResponse::WorldCheck { 
-                            entities: EntityCheckData::vec_from_iter(world_guard.iter_entities())
-                        }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                world_check_route(server_context)
             },
             ClientRequest::ServerCheck => {
-                match world.lock() {
-                    Ok(world_guard) => {
-                        let players_count = world_guard.iter_entities().filter(|e| e.is_player()).count();
-                        ClientResponse::ServerCheck { 
-                            msg: "Hello from server!".to_string(),
-                            connections: players_count
-                        }
-                    },
-                    Err(e) => {
-                        ClientResponse::OtherError { err: e.to_string() }
-                    }
-                }
+                server_check_route(server_context)
             },
             ClientRequest::Move{dir} => {
-                let player_id = clieant_session_data.lock().unwrap().get_entity_player_id();
-                let was_moved = if let Some(player_id) = player_id {
-                    match world.lock() {
-                        Ok(mut world_guard) => {
-                            if let Some((player_pos, player_moving)) = world_guard.get_entity_by_id(player_id).map(|player| (player.position, player.is_moving())) {
-                                if player_moving {
-                                    // can move only after not moving
-                                    false
-                                } else {
-                                    let next_player_pos = player_pos + match dir {
-                                        MoveDirection::Up => Vector2F::new(0.0, 1.0),
-                                        MoveDirection::Down => Vector2F::new(0.0, -1.0),
-                                        MoveDirection::Left => Vector2F::new(-1.0, 0.0),
-                                        MoveDirection::Right => Vector2F::new(1.0, 0.0),
-                                    } * world::TILE_SIZE;
-                                    
-                                    world_guard.try_start_move_entity_to(player_id, next_player_pos).is_ok()
-                                }
-                            } else {
-                                false
-                            }
-                        }
-                        Err(_) => {
-                            false
-                        }
-                    }
-                } else {
-                    false
-                };
-
-                ClientResponse::Move {
-                    started: was_moved
-                }
+                move_route(dir, clieant_session_data, server_context)
             },
+            ClientRequest::CheckGameplayState => {
+                gameplay_state_route(server_context)
+            }
         },
         Err(e) => ClientResponse::BadRequest { err: format!("request={request_str}, reason={e}") },
     };
@@ -200,16 +112,12 @@ fn set_name_route(
         return ClientResponse::SetName { result: Err(SetNameError::NameGenerateExhausted) };
     };
 
-    match clieant_session_data.lock() {
-        Ok(mut sessiod_data_guard) => {
-            if sessiod_data_guard.state == ClientSessionState::JustConnected {
-                sessiod_data_guard.state = ClientSessionState::NameWasSet { name: new_name, gameplay_state: GameplayState::Lobby { ready: false } };
-                ClientResponse::SetName { result: Ok(()) }
-            } else {
-                ClientResponse::BadState
-            }
-        },
-        Err(e) => ClientResponse::OtherError { err: e.to_string() }
+    let mut sessiod_data_guard = clieant_session_data.lock().unwrap();
+    if sessiod_data_guard.state == ClientSessionState::JustConnected {
+        sessiod_data_guard.state = ClientSessionState::NameWasSet { name: new_name, ready_to_start: false, entity_player_id: None };
+        ClientResponse::SetName { result: Ok(()) }
+    } else {
+        ClientResponse::BadState
     }
 }
 
@@ -219,58 +127,130 @@ fn send_message_route(
     clieant_session_data: Arc<Mutex<ClientSessionData>>,
     server_context: Arc<MultiplayerServerContext>
 ) -> ClientResponse {
-    let message  = match clieant_session_data.lock() {
-        Ok(sesssion_data_guard) => {
-            if let Some(name) = sesssion_data_guard.get_name() {
-                ChatMessage::new_from_client(msg, client_session_id, name.to_string())
-            } else {
-                return ClientResponse::SendChatMessage { sent: false };
-            }
-        },
-        Err(e) => {
-            return ClientResponse::OtherError { err: e.to_string() }; 
-        },
+    let message  = {
+        let sesssion_data_guard = clieant_session_data.lock().unwrap();
+        if let Some(name) = sesssion_data_guard.get_name() {
+            ChatMessage::new_from_client(msg, client_session_id, name.to_string())
+        } else {
+            return ClientResponse::SendChatMessage { sent: false };
+        }
     };
 
-    match server_context.chat.lock() {
-        Ok(mut server_context_guard) => {
-            server_context_guard.push(message);
-            ClientResponse::SendChatMessage { sent: true }
-        },
-        Err(e) => {
-            ClientResponse::OtherError { err: e.to_string() }
-        }
-    }
+    let mut server_context_guard = server_context.chat.lock().unwrap();
+    server_context_guard.push(message);
+    ClientResponse::SendChatMessage { sent: true }
 }
 
 fn read_chat_messages_route(
     max_count: Option<usize>,
     server_context: Arc<MultiplayerServerContext>
 ) -> ClientResponse {
-    match server_context.chat.lock() {
-        Ok(server_context_guard) => {
-            if server_context_guard.is_empty() {
-                ClientResponse::ReadChatMessages { results: vec![] }
-            } else {
-                let elements_count = if let Some(max_count) = max_count {
-                    max_count.min(server_context_guard.len())
-                } else {
-                    server_context_guard.len()
-                };
+    let server_context_guard = server_context.chat.lock().unwrap();
+    if server_context_guard.is_empty() {
+        ClientResponse::ReadChatMessages { results: vec![] }
+    } else {
+        let elements_count = if let Some(max_count) = max_count {
+            max_count.min(server_context_guard.len())
+        } else {
+            server_context_guard.len()
+        };
 
-                // Get last messages
-                let results = server_context_guard
-                    .iter()
-                    .rev()
-                    .take(elements_count)
-                    .map(ToString::to_string)
-                    .collect();
+        // Get last messages
+        let results = server_context_guard
+            .iter()
+            .rev()
+            .take(elements_count)
+            .map(ToString::to_string)
+            .collect();
 
-                ClientResponse::ReadChatMessages { results }
+        ClientResponse::ReadChatMessages { results }
+    }
+}
+
+fn set_ready_route(
+    set_to_ready: bool,
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+) -> ClientResponse {
+    let mut sessiod_data_guard = clieant_session_data.lock().unwrap();
+    match &mut sessiod_data_guard.state {
+        ClientSessionState::JustConnected => ClientResponse::BadState,
+        ClientSessionState::NameWasSet { name: _, ready_to_start, entity_player_id: _ } => {
+            // set ready
+            *ready_to_start = set_to_ready;
+            ClientResponse::SetReady { was_set: set_to_ready }
+        },
+    }
+}
+
+fn gameplay_state_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
+    let server_context_guard = server_context.gameplay_state.lock().unwrap();
+    ClientResponse::CheckGameplayState { state: (&*server_context_guard).into() }
+}
+
+fn world_check_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
+    let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+    match &*gameplay_state_guard {
+        super::GameplayState::Lobby { counting_to_start: _ } => {
+            ClientResponse::BadState
+        },
+        super::GameplayState::GameRunning { world } => {
+            ClientResponse::WorldCheck { 
+                entities: EntityCheckData::vec_from_iter(world.iter_entities())
             }
         },
-        Err(e) => {
-            ClientResponse::OtherError { err: e.to_string() }
-        }
+    }
+}
+
+fn server_check_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
+    let connections_count = server_context.get_connections_count();
+    ClientResponse::ServerCheck { 
+        msg: "Hello from server!".to_string(),
+        connections: connections_count
+    }
+}
+
+fn move_route(
+    dir: MoveDirection,
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+    server_context: Arc<MultiplayerServerContext>
+)  -> ClientResponse {
+    let player_entity_id = clieant_session_data.lock().unwrap().get_entity_player_id();
+    let player_entity_id = match player_entity_id {
+        Some(id) => id,
+        None => {
+            return ClientResponse::BadState;
+        },
+    };
+    let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+
+    match &mut *gameplay_state_guard {
+        super::GameplayState::Lobby { counting_to_start: _ } => {
+            ClientResponse::BadState
+        },
+        super::GameplayState::GameRunning { world } => {
+            let player_info = world
+                .get_entity_by_id(player_entity_id)
+                .map(|player| (player.position, player.is_moving()));
+            
+            let was_moved = if let Some((player_pos, player_moving)) = player_info {
+                if player_moving {
+                    // Can move only after not moving
+                    false
+                } else {
+                    let next_player_pos = player_pos + match dir {
+                        MoveDirection::Up => Vector2F::new(0.0, 1.0),
+                        MoveDirection::Down => Vector2F::new(0.0, -1.0),
+                        MoveDirection::Left => Vector2F::new(-1.0, 0.0),
+                        MoveDirection::Right => Vector2F::new(1.0, 0.0),
+                    } * world::TILE_SIZE;
+                    
+                    world.try_start_move_entity_to(player_entity_id, next_player_pos).is_ok()
+                }
+            } else {
+                false
+            };
+
+            ClientResponse::Move { started: was_moved }
+        },
     }
 }

@@ -1,5 +1,9 @@
-use clap::{Parser, Subcommand, Args};
-use rand::seq::IndexedRandom;
+use clap::{
+    Parser, 
+    Subcommand, 
+    Args
+};
+
 use rust_multiplayer::DEFAULT_SERVER_ADRESS;
 
 /// # Global Arguments
@@ -74,10 +78,7 @@ fn main() {
 }
 
 mod cli_server {
-    use rust_multiplayer::{
-        game::math::Vector2F, 
-        app::server::MultiplayerServer
-    };
+    use rust_multiplayer::app::server::MultiplayerServer;
 
     pub fn run<A: tokio::net::ToSocketAddrs>(addr: A) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -86,29 +87,6 @@ mod cli_server {
             log::info!("MP-server, address:{:?}",  server.get_local_address().unwrap());
             
             let server_handler = server.run().await.unwrap();
-        
-            {
-                let mut world = server_handler.server_context.world.lock().unwrap();
-                world.create_entity_npc("Tuna", Vector2F::new(5.0, 10.0), Vector2F::new(4.8, 4.8));
-                world.create_entity_npc("Starlette", Vector2F::new(-5.0, 0.0), Vector2F::new(4.8, 4.8));
-                world.create_entity_npc("Bucket", Vector2F::new(5.0, -5.0), Vector2F::new(4.8, 4.8));
-                world.create_entity_npc("Sugar", Vector2F::new(5.0, 0.0), Vector2F::new(4.8, 4.8));
-                world.create_entity_npc("Tapioka", Vector2F::new(10.0, 5.0), Vector2F::new(4.8, 4.8));
-
-                for ix in -9..9 {
-                    if (-2..3).contains(&ix) {
-                        continue;
-                    }
-                    for iy in -5..5 {
-                        if (-2..3).contains(&iy) {
-                            continue;
-                        }
-                        let x = (ix * 5) as f32;
-                        let y = (iy * 5) as f32;
-                        world.create_entity_npc("Bot", Vector2F::new(x, y), Vector2F::new(4.8, 4.8));
-                    }
-                }
-            }
 
             let (ctrlc_sender, ctrlc_receiver) = tokio::sync::oneshot::channel();
             let mut ctrlc_sender = Some(ctrlc_sender);
@@ -179,7 +157,6 @@ mod cli_request {
     }
 }
 
-
 mod cli_player_client {
     const SCROLL_SENSITIVITY: f32 = 0.1;
     use rust_multiplayer::{
@@ -249,7 +226,7 @@ mod cli_player_client {
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(async move {
                         let client_handler = self.client_handler.take().unwrap();
-                        client_handler.join().unwrap()
+                        client_handler.wait_until_finished().unwrap()
                     });
                 }
                 WindowEvent::RedrawRequested => {

@@ -9,10 +9,9 @@ use std::{
 use rust_multiplayer::{
     app::{
         client::{MultiplayerClient, MultiplayerClientHandle}, 
-        server::{client_session::{ClientSessionState, GameplayState}, MultiplayerServer}
+        server::{client_session::ClientSessionState, GameplayState, MultiplayerServer}
     }, requests::{
-        ClientRequest, 
-        ClientResponse, MoveDirection
+        ClientRequest, ClientResponse, GameplayStateBrief, MoveDirection
     }
 };
 
@@ -135,7 +134,8 @@ where
         client_offloaded_task.await.unwrap();
     }
 
-    server_handler.await_all_disconnect().await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    server_handler.await_all_disconnect().await; // Monitor, once failed. Added delay before, meybe will help.
     assert_eq!(server_handler.connections_count(), 0, "Client not disconnected");
 
     // Spawn final client
@@ -183,19 +183,13 @@ async fn test_client_common_read_only_requests() {
         matches!(response, ClientResponse::ServerCheck { msg: _, connections: 1 });
         
         let response = client_handler.make_request(ClientRequest::GetEntityId).unwrap();
-        matches!(response, ClientResponse::GetEntityId { id: None });
+        assert!(matches!(response, ClientResponse::GetEntityId { id: None }), "{response:?}");
         
         let response = client_handler.make_request(ClientRequest::WorldCheck).unwrap();
-        match response {
-            ClientResponse::WorldCheck { entities } => assert!(entities.is_empty()),
-            _ => panic!("Bad response"),
-        }
+        assert!(matches!(response, ClientResponse::BadState), "{response:?}");
         
         let response = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Down }).unwrap();
-        match response {
-            ClientResponse::Move { started } => assert!(!started),
-            _ => panic!("Bad response"),
-        }
+        assert!(matches!(response, ClientResponse::BadState), "{response:?}");
     }).await;
 }
 
@@ -224,8 +218,7 @@ async fn test_client_set_name() {
         let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
         match response {
             ClientResponse::GetClientSessionData { data } => {
-                assert!(matches!(data.state, ClientSessionState::NameWasSet { name: _, gameplay_state: GameplayState::Lobby {ready: _} }));
-                assert_eq!(data.get_entity_player_id(), None);
+                assert!(matches!(data.state, ClientSessionState::NameWasSet { name: _, ready_to_start: false, entity_player_id: None }));
                 assert_eq!(data.get_name(), Some(name_to_be_set));
             },
             _ => panic!("Bad response"),
@@ -256,7 +249,7 @@ async fn test_client_set_ready() {
         let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
         match response {
             ClientResponse::GetClientSessionData { data } => {
-                assert!(matches!(data.state, ClientSessionState::NameWasSet { name: _, gameplay_state: GameplayState::Lobby {ready: true} }));
+                assert!(matches!(data.state, ClientSessionState::NameWasSet { name: _, ready_to_start: true, entity_player_id: None }));
                 assert_eq!(data.get_entity_player_id(), None);
                 assert_eq!(data.get_name(), Some(name_to_be_set));
             },
@@ -300,9 +293,10 @@ async fn test_client_gets_generated_name() {
         let response = client_handler.make_request_with_timeout(ClientRequest::GetClientSessionData, None).unwrap();
         match response {
             ClientResponse::GetClientSessionData { data } => match data.state {
-                ClientSessionState::NameWasSet { name, gameplay_state } => {
-                    assert!(matches!(gameplay_state, GameplayState::Lobby { ready: _ }));
+                ClientSessionState::NameWasSet { name, ready_to_start, entity_player_id } => {
                     assert!(!name.is_empty());
+                    assert!(!ready_to_start);
+                    assert!(entity_player_id.is_none());
                     println!("{name}");
                 },
                 _ => panic!("Bad state"),
@@ -417,6 +411,20 @@ async fn test_multiple_clients_chatting() {
 
     assert_eq!(*counter.lock().unwrap(), CLIENTS_COUNT);
 }
+
+#[tokio::test]
+async fn test_check_initial_gameplay_state_should_be_lobby() {
+    run_single_client_test(|client_handler| {
+        let response = client_handler.make_request_with_timeout(ClientRequest::CheckGameplayState, None).unwrap();
+        match response {
+            ClientResponse::CheckGameplayState { state } => {
+                assert!(matches!(state, GameplayStateBrief::Lobby { counting_to_start: None }));
+            },
+            _ => panic!("Bad response"),
+        }
+    }).await;
+}
+
 
 #[tokio::test]
 async fn test_server_drops_all_connetions() {
