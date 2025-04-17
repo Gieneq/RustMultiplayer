@@ -1,9 +1,12 @@
+use crate::game::math::Vector2I;
+
 use super::math::{
     Rect2F,
     Vector2F
 };
 
 use rand::seq::IndexedRandom;
+use serde::{Deserialize, Serialize};
 
 pub const TILE_SIZE: f32 = 5.0;
 pub const ENTITY_SIZE: Vector2F = Vector2F {
@@ -11,10 +14,27 @@ pub const ENTITY_SIZE: Vector2F = Vector2F {
     y: TILE_SIZE - 0.2
 };
 
-#[derive(Debug)]
+pub fn get_tiled_value(v: i32) -> f32 {
+    v as f32 * TILE_SIZE
+}
+
+pub fn get_tiled_vec(x: i32, y: i32) -> Vector2F {
+    Vector2F {
+        x: get_tiled_value(x),
+        y: get_tiled_value(y)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum WorldError {
+    #[error("EntityNotExist")]
     EntityNotExist,
+
+    #[error("EntityCannotMoveThere")]
     EntityCannotMoveThere,
+
+    #[error("EntityCannotBecameSeeker")]
+    EntityCannotBecameSeeker,
 }
 
 #[derive(Debug)]
@@ -39,8 +59,17 @@ pub struct NpcController {
     change_destination_counter: u32,
 }
 
-#[derive(Debug)]
-pub struct PlayerController;
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+pub enum PlayerRole {
+    #[default]
+    Hider,
+    Seeker
+}
+
+#[derive(Debug, Default)]
+pub struct PlayerController {
+    role: PlayerRole
+}
 
 #[derive(Debug)]
 pub enum EntityController {
@@ -111,7 +140,7 @@ impl World {
             EntityStats {
                 movement_speed: PLAYER_MOVEMENT_SPEED
             }, 
-            EntityController::Player(PlayerController)
+            EntityController::Player(PlayerController::default())
         )
     }
 
@@ -163,6 +192,25 @@ impl World {
         Ok(())
     }
 
+    pub fn select_entity_as_seeker(&mut self, entity_id: EntityId) -> Result<(), WorldError> {
+        let entity = match self.get_entity_by_id_mut(entity_id) {
+            Some(e) => e,
+            None => {
+                return Err(WorldError::EntityNotExist);
+            }
+        };
+
+        match &mut entity.controller {
+            EntityController::Npc(_) => {
+                Err(WorldError::EntityCannotBecameSeeker)
+            },
+            EntityController::Player(player_controller) => {
+                player_controller.role = PlayerRole::Seeker;
+                Ok(())
+            },
+        }
+    }
+
     pub fn get_entity_by_id(&self, entity_id: EntityId) -> Option<&Entity> {
         self.entities.iter().find(|e| e.id == entity_id)
     }
@@ -186,6 +234,81 @@ impl World {
             }
         }
         false
+    }
+
+    // TODO add some types to distinguish tiled metrics from units overall
+
+    /// range - in units not in tiles
+    fn get_tiles_positions(&self, center_point: Vector2F, circle_range: f32, find_free_tiles: bool) -> Vec<Vector2F> {
+        assert!(circle_range > 0.0);
+        const HALF_TILE: Vector2F = Vector2F {
+            x: TILE_SIZE / 2.0,
+            y: TILE_SIZE / 2.0
+        };
+        const ENOUGH_CORNERS_TO_BE_INTERSECTING: usize = 2;
+
+        if circle_range == 0.0 {
+            return Vec::default();
+        }
+
+        let circle_range_squarde = circle_range.powi(2);
+
+        // range should be higher or equal tocover all possible tiles
+        let circle_range_tiled = {
+            let tmp = (circle_range / TILE_SIZE).ceil();
+            if tmp <= 0.0 {
+                0
+            } else {
+                tmp as i32
+            }
+        };
+
+        // iterate from to +- range_tiled in x and y and pick those from inside of circle
+        let xy_range = -circle_range_tiled..=circle_range_tiled;
+
+        let mut results = vec![];
+
+        for iy in xy_range.clone() {
+            for ix in xy_range.clone() {
+
+                let tile_corners= [
+                    (ix, iy),
+                    (ix + 1, iy),
+                    (ix, iy + 1),
+                    (ix + 1, iy + 1),
+                ];
+
+                let tile_corners_intersecting_count = tile_corners.iter()
+                    .filter_map(|(corner_x, corner_y)| {
+                        let corner_vec = get_tiled_vec(*corner_x, *corner_y);
+                        let center_corner_vec = corner_vec - HALF_TILE;
+
+                        // At edge case will always capture additional 4 adjecent tiles
+                        (center_corner_vec.length_squared() <= circle_range_squarde).then_some(())
+                    })
+                    .count();
+
+                let enough_tile_corners_intersecting = tile_corners_intersecting_count >= ENOUGH_CORNERS_TO_BE_INTERSECTING;
+
+                if enough_tile_corners_intersecting {
+                    let tile_position = center_point + get_tiled_vec(ix, iy);
+
+                    // Toglle search
+                    if find_free_tiles != self.is_tile_occupied(&tile_position) {
+                        results.push(tile_position);
+                    }
+                }
+            }
+        }
+        results
+    }
+    
+    pub fn get_free_tiles_positions(&self, center_point: Vector2F, circle_range: f32) -> Vec<Vector2F> {
+        self.get_tiles_positions(center_point, circle_range, true)
+    }
+
+    pub fn get_occupied_tiles_positions(&self, center_point: Vector2F, circle_range: f32) -> Vec<Vector2F> {
+        self.get_tiles_positions(center_point, circle_range, false)
     }
 
     pub fn tick(&mut self) {
@@ -311,6 +434,13 @@ impl Entity {
     pub fn is_moving(&self) -> bool {
         matches!(self.state, EntityState::Moving { from_position: _, destination: _ })
     }
+
+    pub fn get_player_role(&self) -> Option<&PlayerRole> {
+        match &self.controller {
+            EntityController::Npc(_) => None,
+            EntityController::Player(player_controller) => Some(&player_controller.role),
+        }
+    }
 }
 
 #[test]
@@ -380,4 +510,47 @@ fn test_coords_negative_alignment() {
     let v2_expected = Vector2F::new((x_tiles_count - 1.0) * TILE_SIZE, (y_tiles_count - 1.0) * TILE_SIZE);
 
     assert_eq!(v2, v2_expected, "v1={v1:?}");
+}
+
+#[test]
+fn test_tiled_coords() {
+    assert_eq!(0.0, get_tiled_value(0));
+    assert_eq!(-TILE_SIZE, get_tiled_value(-1));
+    assert_eq!(TILE_SIZE, get_tiled_value(1));
+    
+    assert_eq!(Vector2F::zero(), get_tiled_vec(0, 0));
+    assert_eq!(Vector2F::new(-TILE_SIZE, -TILE_SIZE), get_tiled_vec(-1, -1));
+    assert_eq!(Vector2F::new(TILE_SIZE, TILE_SIZE), get_tiled_vec(1, 1));
+    assert_eq!(Vector2F::new(2.0 * TILE_SIZE, 0.0), get_tiled_vec(2, 0));
+}
+
+#[test]
+fn test_world_entity_count_free_positions() {
+    let world = World::new();
+
+    let free_tiles_not_enough_range = world.get_free_tiles_positions(Vector2F::zero(), TILE_SIZE / 2.0);
+    assert_eq!(free_tiles_not_enough_range.len(), 0);
+
+    let free_tiles_one_tile_edge_case = world.get_free_tiles_positions(Vector2F::zero(), (TILE_SIZE / 2.0) * 2.0_f32.sqrt());
+    assert_eq!(free_tiles_one_tile_edge_case.len(), 1 + 4);
+
+    let free_tiles_one_tile_range = world.get_free_tiles_positions(Vector2F::zero(), TILE_SIZE);
+    assert_eq!(free_tiles_one_tile_range.len(), 1 + 4);
+
+    let free_tiles_captures_9_tiles = world.get_free_tiles_positions(Vector2F::zero(), 2.0 *TILE_SIZE);
+    assert_eq!(free_tiles_captures_9_tiles.len(), 9 + 4);
+}
+
+#[test]
+fn test_world_entity_free_positions() {
+    let entity_name = "Bob";
+    let occupied_tile_location = Vector2I::new(1, 1);
+    let entity_occupied_posiiton = get_tiled_vec(occupied_tile_location.x, occupied_tile_location.y);
+
+    let mut world = World::new();
+    let _new_entity_id = world.create_entity_npc(entity_name, entity_occupied_posiiton, ENTITY_SIZE);
+
+    let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), get_tiled_value(3));
+
+    assert!(!free_tiles.contains(&entity_occupied_posiiton));
 }

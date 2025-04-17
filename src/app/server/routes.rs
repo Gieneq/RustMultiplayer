@@ -55,7 +55,13 @@ pub fn route_client_request(
             },
             ClientRequest::CheckGameplayState => {
                 gameplay_state_route(server_context)
-            }
+            },
+            ClientRequest::GetRole => {
+                get_role_route(clieant_session_data, server_context)
+            },
+            ClientRequest::GetCountdownTime => {
+                get_countdown_time_route(server_context)
+            },
         },
         Err(e) => ClientResponse::BadRequest { err: format!("request={request_str}, reason={e}") },
     };
@@ -252,5 +258,49 @@ fn move_route(
 
             ClientResponse::Move { started: was_moved }
         },
+    }
+}
+
+fn get_role_route(
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+    server_context: Arc<MultiplayerServerContext>
+) -> ClientResponse {
+    // Entity idd is assigned if player is in InGamestag
+    let entity_id = {
+        let sessiod_data_guard = clieant_session_data.lock().unwrap();
+        match sessiod_data_guard.get_entity_player_id() {
+            Some(id) => id,
+            None => {
+                // EntityIdis not assignedyet, probably still lobby stage
+                return ClientResponse::BadState;
+            }
+        }
+    };
+    
+    let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+    match &*gameplay_state_guard {
+        super::GameplayState::Lobby { counting_to_start: _ } => ClientResponse::BadState,
+        super::GameplayState::GameRunning { world } => {
+            match world.get_entity_by_id(entity_id) {
+                Some(e) => {
+                    // Rather should not happen this player will not be PlayerEntity type
+                    match e.get_player_role() {
+                        Some(player_role) => ClientResponse::GetRole { role: *player_role},
+                        None => ClientResponse::EntityNotPlayer { id: entity_id }
+                    }
+                },
+                None => ClientResponse::EntityNotFound { id: entity_id }
+            }
+        },
+    }
+}
+
+fn get_countdown_time_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
+    let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+    match &*gameplay_state_guard {
+        super::GameplayState::Lobby { counting_to_start } => {
+            ClientResponse::GetCountdownTime { time: *counting_to_start }
+        },
+        super::GameplayState::GameRunning { world: _ } => ClientResponse::BadState,
     }
 }

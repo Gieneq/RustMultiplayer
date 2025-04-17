@@ -12,7 +12,7 @@ use crate::{
         math::Vector2F, 
         world::{
             Entity, 
-            EntityId
+            EntityId, PlayerRole
         }
     }
 };
@@ -70,6 +70,8 @@ pub enum ClientRequest {
     Move {
         dir: MoveDirection
     },
+    GetRole,
+    GetCountdownTime,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -133,12 +135,24 @@ pub enum ClientResponse {
         err: String
     },
     BadState,
+    EntityNotPlayer {
+        id: EntityId
+    },
+    EntityNotFound {
+        id: EntityId
+    },
     OtherError {
         err: String
     },
     Move {
         started: bool
     },
+    GetRole {
+        role: PlayerRole
+    },
+    GetCountdownTime {
+        time: Option<u32>
+    }
 }
 
 impl EntityCheckData {

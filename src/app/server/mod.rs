@@ -16,10 +16,11 @@ use chat::ChatMessage;
 use client_session::{
     ClientSession, 
     ClientSessionDisconnectEvent, 
-    ClientSessionId
+    ClientSessionId, ClientSessionState
 };
+use rand::seq::{IndexedRandom, IteratorRandom};
 
-use crate::game::world::World;
+use crate::game::{math::Vector2F, world::{self, get_tiled_value, World, WorldError, ENTITY_SIZE}};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -40,6 +41,15 @@ pub struct MultiplayerServerHandler {
     shutdown_sender: tokio::sync::oneshot::Sender<()>,
     notify_no_connection: Arc<tokio::sync::Notify>,
     notify_any_connection: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartGameError {
+    #[error("NoFreeTiles")]
+    NoFreeTiles,
+
+    #[error("WorldErrorHappen, reason='{0}'")]
+    WorldErrorHappen(#[from] WorldError)
 }
 
 #[derive(Debug)]
@@ -135,6 +145,7 @@ impl MultiplayerServer {
         })
     }
     
+    //TODO reject connecting other clients of game is in progress
     async fn connection_procedure(
         self,
         mut shutdown_server_receiver: tokio::sync::oneshot::Receiver<()>,
@@ -233,19 +244,104 @@ impl MultiplayerServer {
                 },
                 _ = tokio::time::sleep(Self::MAIN_LOOP_INTERVAL) => {
                     // TODO add timing to have steady ticks/sec average
-                    let mut gameplay_state_guard = server_context_shared_main_loop.gameplay_state.lock().unwrap();
-                    match &mut *gameplay_state_guard {
-                        GameplayState::Lobby { counting_to_start: _ } => {
-                        
-                        },
-                        GameplayState::GameRunning { world } => {
-                            // Execute every tick
-                            world.tick();
-                        },
-                    }
+                    Self::main_loop_procedure(server_context_shared_main_loop.clone());
                 },
             }
         }
+    }
+
+    fn main_loop_procedure(server_context: Arc<MultiplayerServerContext>) {
+        const CLIENTS_REQUIRED_TO_START: usize = 2;
+        const TICKS_TO_COUNTDOWN: u32 = 10;
+
+        let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+
+        if let GameplayState::Lobby { counting_to_start } = &mut *gameplay_state_guard {
+            let all_ready = server_context.are_all_clients_ready();
+            let enough_clients = server_context.get_connections_count() >= CLIENTS_REQUIRED_TO_START;
+
+            // Counting transitions
+            match counting_to_start {
+                Some(_) if !all_ready || !enough_clients => {
+                    // Should stop counting
+                    *counting_to_start = None;
+                },
+                Some(count) => {
+                    // Count down
+                    *count = count.saturating_sub(1);
+                }
+                None if all_ready && enough_clients => {
+                    // Should start counting
+                    *counting_to_start = Some(TICKS_TO_COUNTDOWN);
+                },
+                _ => {}
+            }
+
+            if let Some(count) = counting_to_start {
+                // Countdown exhausted
+                if *count == 0 {
+                    gameplay_state_guard.try_transition_to_game_running().unwrap();
+                    if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {       
+                        let start_game_reuslt = Self::start_new_game(world, &server_context.client_sessions_handlers);
+
+                        if start_game_reuslt.is_err() {
+                            gameplay_state_guard.try_transition_to_lobby().unwrap();
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        
+        if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {
+            // TODO some game end check
+            world.tick();
+        }
+    }
+
+    fn start_new_game(
+        world: &mut World,
+        clients: &Mutex<HashMap<u32, client_session::ClientSessionHandler>>
+    ) -> Result<(), StartGameError> {
+        log::info!("Game just started!");
+        let mut rng = rand::rng();
+
+        // TODO Generate world
+        // In future some obstacles, scenery
+
+        // TODO Add NPCs
+
+        // TODO Assign entity to clients
+        let mut clients_guard = clients.lock().unwrap();
+
+        // Select one client as seeker
+        let seeker_client_id = *clients_guard.keys().choose(&mut rng).unwrap();
+
+        let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), get_tiled_value(4));
+        if free_tiles.len() < clients_guard.len() {
+            return Err(StartGameError::NoFreeTiles);
+        }
+
+        let mut initial_clients_positions = free_tiles.choose_multiple(&mut rng, clients_guard.len());
+
+        for (_, client) in clients_guard.iter_mut() {
+            let mut client_data = client.data.lock().unwrap();
+            if let ClientSessionState::NameWasSet { name, ready_to_start, entity_player_id } = &mut client_data.state {
+                let intial_position = initial_clients_positions.next().expect("Client should have initial position selected");
+                let assigned_id = world.create_entity_player(&name, *intial_position, ENTITY_SIZE);
+                *ready_to_start = false;
+                *entity_player_id = Some(assigned_id);
+
+                // Assign seeker role to one entity
+                if seeker_client_id == client.id {
+                    world.select_entity_as_seeker(assigned_id)?;
+                }
+
+                log::info!("Client '{name}' gets Entity assigned id={assigned_id}");
+            }
+        }
+
+        Ok(())
     }
 
 }
@@ -283,6 +379,17 @@ impl MultiplayerServerContext {
     pub fn get_connections_count(&self) -> usize {
         let guard = self.client_sessions_handlers.lock().unwrap();
         guard.len()
+    }
+
+    pub fn are_all_clients_ready(&self) -> bool {
+        let guard = self.client_sessions_handlers.lock().unwrap();
+        guard.iter().all(|(_, client)| {
+            let data_lock = client.data.lock().unwrap();
+            match &data_lock.state {
+                client_session::ClientSessionState::JustConnected => false,
+                client_session::ClientSessionState::NameWasSet { name: _, ready_to_start, entity_player_id: _ } => *ready_to_start,
+            }
+        })
     }
 }
 
