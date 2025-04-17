@@ -19,8 +19,9 @@ use client_session::{
     ClientSessionId, ClientSessionState
 };
 use rand::seq::{IndexedRandom, IteratorRandom};
+use serde::{Deserialize, Serialize};
 
-use crate::game::{math::Vector2F, world::{self, get_tiled_value, World, WorldError, ENTITY_SIZE}};
+use crate::game::{math::Vector2F, world::{get_tiled_value, World, WorldError, ENTITY_SIZE}};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -54,20 +55,34 @@ pub enum StartGameError {
 
 #[derive(Debug)]
 pub enum GameplayStateTransitionError {
-    AlreadyInLobby,
-    AlreadyGameRunning,
+    BadState,
+    AlreadyInState,
 }
 
 #[derive(Debug)]
 pub enum GameplayState {
     Lobby {
         counting_to_start: Option<u32>,
+        last_result: Option<GameplayResult>,
     },
     GameRunning {
         world: World
     },
+    Ending {
+        countdown: u32,
+        result: GameplayResult
+    },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum GameplayResult {
+    SeekerWin {
+        reward: u32,
+    },
+    HidersWin {
+        reward: u32,
+    },
+}
 pub struct MultiplayerServerContext {
     pub client_sessions_handlers: Mutex<HashMap<ClientSessionId, client_session::ClientSessionHandler>>,
     pub chat: Mutex<Vec<ChatMessage>>,
@@ -256,7 +271,7 @@ impl MultiplayerServer {
 
         let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
 
-        if let GameplayState::Lobby { counting_to_start } = &mut *gameplay_state_guard {
+        if let GameplayState::Lobby { counting_to_start, last_result:_ } = &mut *gameplay_state_guard {
             let all_ready = server_context.are_all_clients_ready();
             let enough_clients = server_context.get_connections_count() >= CLIENTS_REQUIRED_TO_START;
 
@@ -280,12 +295,12 @@ impl MultiplayerServer {
             if let Some(count) = counting_to_start {
                 // Countdown exhausted
                 if *count == 0 {
-                    gameplay_state_guard.try_transition_to_game_running().unwrap();
+                    gameplay_state_guard.try_transition_from_lobby_to_gamerunning().unwrap();
                     if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {       
                         let start_game_reuslt = Self::start_new_game(world, &server_context.client_sessions_handlers);
 
                         if start_game_reuslt.is_err() {
-                            gameplay_state_guard.try_transition_to_lobby().unwrap();
+                            gameplay_state_guard.unexpected_transition_to_lobby();
                         }
                     }
                     return;
@@ -295,35 +310,150 @@ impl MultiplayerServer {
         
         if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {
             // TODO some game end check
-            world.tick();
+            let result = Self::check_gameplay_result(world);
+
+            if let Some(result) = result {
+                // Has result, detach entities from clients, transition to ending countdownstage 
+
+                // All not ready, EntityIds to None
+                server_context.detach_entities_from_clients();
+
+                gameplay_state_guard.try_transition_from_gamerunning_to_ending(result).unwrap();
+                return;
+            } else {
+                // No result yet
+                world.tick();
+            }
         }
+
+        if let GameplayState::Ending { countdown, result: _ }= &mut *gameplay_state_guard {
+            *countdown = countdown.saturating_sub(1);
+            
+            if *countdown == 0 || server_context.get_connections_count() == 0 {
+                gameplay_state_guard.try_transition_from_ending_to_lobby().unwrap();
+            }
+        }
+
+    }
+
+    fn check_gameplay_result(world: &World) -> Option<GameplayResult> {
+        const SMALL_HIDERS_REWARD: u32 = 5; // Seeker has gone
+        // const MEDIUM_HIDERS_REWARD: u32 = 10;
+        // const BIGL_HIDERS_REWARD: u32 = 20; // All surviwed
+        
+        const SMALL_SEEKER_REWARD: u32 = 5;
+
+        // let clients_guard = clients.lock().unwrap();
+        let summary = world.get_seeker_hiders_summary();
+        // TODO use summary to togglegameplay state
+
+        let seeker_win = if let Some((_, seeker_stats)) = summary.seeker {
+            if seeker_stats.remaining_failures == 0 || seeker_stats.remaining_ticks == 0 {
+                Some(GameplayResult::HidersWin { reward: SMALL_HIDERS_REWARD })
+            } else {
+                None
+            }
+        } else {
+            // Seeker has gone, hiders win
+            Some(GameplayResult::HidersWin { reward: SMALL_HIDERS_REWARD })
+        };
+
+        if seeker_win.is_some() {
+            return seeker_win;
+        }
+
+        summary.hiders.iter()
+            .all(|(_, h)| !h.covered)
+            .then_some(GameplayResult::SeekerWin { reward: SMALL_SEEKER_REWARD })
     }
 
     fn start_new_game(
         world: &mut World,
         clients: &Mutex<HashMap<u32, client_session::ClientSessionHandler>>
     ) -> Result<(), StartGameError> {
+        const MAPSIZE_GENERATION_FACTOR: usize = 3;
+
         log::info!("Game just started!");
         let mut rng = rand::rng();
 
-        // TODO Generate world
+        let hiders_count = {
+            let clients_guard = clients.lock().unwrap();
+            clients_guard.len().saturating_sub(1)
+        };
+
+        let generation_range = get_tiled_value((hiders_count.min(1) * MAPSIZE_GENERATION_FACTOR) as i32);
+
+        // Generate world
+        Self::generate_world(world, &mut rng, generation_range)?;
+
+        // Assign entity to clients
+        Self::assign_world_entities_to_clients(world, clients, &mut rng, generation_range)?;
+
+        // Add NPCs
+        Self::place_npcs_around_world(world, &mut rng, generation_range, hiders_count)?;
+
+        Ok(())
+    }
+
+    fn generate_world(
+        _world: &mut World, 
+        _rng: &mut rand::prelude::ThreadRng,
+        _generation_range: f32
+    ) -> Result<(), StartGameError> {
         // In future some obstacles, scenery
+        Ok(())
+    }
 
-        // TODO Add NPCs
-
-        // TODO Assign entity to clients
-        let mut clients_guard = clients.lock().unwrap();
-
-        // Select one client as seeker
-        let seeker_client_id = *clients_guard.keys().choose(&mut rng).unwrap();
-
-        let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), get_tiled_value(4));
-        if free_tiles.len() < clients_guard.len() {
+    fn place_npcs_around_world(
+        world: &mut World, 
+        rng: &mut rand::prelude::ThreadRng,
+        generation_range: f32,
+        hiders_count: usize
+    ) -> Result<(), StartGameError> {
+        const NPCS_PER_HIDER: usize = 2;
+        let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), generation_range);
+        
+        // Need at least 1 spot for NPCs
+        if free_tiles.is_empty() {
             return Err(StartGameError::NoFreeTiles);
         }
 
-        let mut initial_clients_positions = free_tiles.choose_multiple(&mut rng, clients_guard.len());
+        let nps_count = {
+            let expectednpc_count = NPCS_PER_HIDER * hiders_count;
+            free_tiles.len().min(expectednpc_count)
+        };
 
+        let npcs_initial_positions = free_tiles.choose_multiple(rng, nps_count);
+        for &initial_position in npcs_initial_positions {
+            let _entity_id = world.create_entity_npc("NPC", initial_position, ENTITY_SIZE);
+        }
+
+        Ok(())
+    }
+
+    fn assign_world_entities_to_clients(
+        world: &mut World, clients: &Mutex<HashMap<u32, 
+        client_session::ClientSessionHandler>>, 
+        rng: &mut rand::prelude::ThreadRng,
+        generation_range: f32
+    ) -> Result<(), StartGameError> {
+        const SEEKING_MAX_TIME: u32 = 2000;
+        const SEEKING_MAX_TRIES: usize = 3;
+
+        let mut clients_guard = clients.lock().unwrap();
+
+        let seeker_client_id = *clients_guard.keys().choose(rng).unwrap();
+
+        let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), generation_range);
+        
+        // Need at least 1 spot for NPCs
+        if free_tiles.len() <= clients_guard.len() {
+            return Err(StartGameError::NoFreeTiles);
+        }
+
+        // TODO spread hiders and seekers, some Voronoi can work
+        let mut initial_clients_positions = free_tiles.choose_multiple(rng, clients_guard.len());
+        
         for (_, client) in clients_guard.iter_mut() {
             let mut client_data = client.data.lock().unwrap();
             if let ClientSessionState::NameWasSet { name, ready_to_start, entity_player_id } = &mut client_data.state {
@@ -331,19 +461,18 @@ impl MultiplayerServer {
                 let assigned_id = world.create_entity_player(&name, *intial_position, ENTITY_SIZE);
                 *ready_to_start = false;
                 *entity_player_id = Some(assigned_id);
-
+    
                 // Assign seeker role to one entity
                 if seeker_client_id == client.id {
-                    world.select_entity_as_seeker(assigned_id)?;
+                    world.select_entity_as_seeker(assigned_id, SEEKING_MAX_TIME, SEEKING_MAX_TRIES)?;
                 }
-
+    
                 log::info!("Client '{name}' gets Entity assigned id={assigned_id}");
             }
         }
 
         Ok(())
     }
-
 }
 
 impl MultiplayerServerHandler {
@@ -372,18 +501,18 @@ impl MultiplayerServerHandler {
 
 impl MultiplayerServerContext {
     pub fn is_name_used(&self, name: &str) -> bool {
-        let guard = self.client_sessions_handlers.lock().unwrap();
-        guard.iter().any(|(_, v)| v.data.lock().unwrap().get_name() == Some(name))
+        let clients_guard = self.client_sessions_handlers.lock().unwrap();
+        clients_guard.iter().any(|(_, v)| v.data.lock().unwrap().get_name() == Some(name))
     }
 
     pub fn get_connections_count(&self) -> usize {
-        let guard = self.client_sessions_handlers.lock().unwrap();
-        guard.len()
+        let clients_guard = self.client_sessions_handlers.lock().unwrap();
+        clients_guard.len()
     }
 
     pub fn are_all_clients_ready(&self) -> bool {
-        let guard = self.client_sessions_handlers.lock().unwrap();
-        guard.iter().all(|(_, client)| {
+        let clients_guard = self.client_sessions_handlers.lock().unwrap();
+        clients_guard.iter().all(|(_, client)| {
             let data_lock = client.data.lock().unwrap();
             match &data_lock.state {
                 client_session::ClientSessionState::JustConnected => false,
@@ -391,31 +520,65 @@ impl MultiplayerServerContext {
             }
         })
     }
+
+    pub fn detach_entities_from_clients(&self) {
+        let mut clients_guard = self.client_sessions_handlers.lock().unwrap();
+        clients_guard.iter_mut().for_each(|(_, client)| {
+            let mut client_data_guard = client.data.lock().unwrap();
+            if let ClientSessionState::NameWasSet { name: _, ready_to_start, entity_player_id } = &mut client_data_guard.state {
+                *ready_to_start = false;
+                *entity_player_id = None;
+            }
+        });
+
+    }
 }
 
 impl Default for GameplayState {
     fn default() -> Self {
-        Self::Lobby { counting_to_start: None }
+        Self::Lobby { counting_to_start: None, last_result: None }
     }
 }
 
 impl GameplayState {
-    pub fn try_transition_to_game_running(&mut self) -> Result<(), GameplayStateTransitionError> {
-        if let GameplayState::GameRunning { world: _ } = self {
-            return Err(GameplayStateTransitionError::AlreadyGameRunning)
+    pub fn try_transition_from_lobby_to_gamerunning(&mut self) -> Result<(), GameplayStateTransitionError> {
+        match self {
+            GameplayState::Lobby { counting_to_start: _, last_result: _ } => {
+                *self = GameplayState::GameRunning { world: World::new() };
+                Ok(())
+            },
+            GameplayState::GameRunning { world: _ } => Err(GameplayStateTransitionError::AlreadyInState),
+            GameplayState::Ending { countdown: _, result: _ } => Err(GameplayStateTransitionError::BadState),
         }
-
-        *self = GameplayState::GameRunning { world: World::new() };
-        Ok(())
     }
     
-    pub fn try_transition_to_lobby(&mut self) -> Result<(), GameplayStateTransitionError> {
-        if let GameplayState::Lobby { counting_to_start: _ } = self {
-            return Err(GameplayStateTransitionError::AlreadyInLobby)
-        }
+    pub fn try_transition_from_gamerunning_to_ending(&mut self, result: GameplayResult) -> Result<(), GameplayStateTransitionError> {
+        const ENDING_COUNTDOWN: u32 = 100;
 
-        *self = GameplayState::Lobby { counting_to_start: None };
-        Ok(())
+        match self {
+            GameplayState::Lobby { counting_to_start: _, last_result: _, } => Err(GameplayStateTransitionError::BadState),
+            GameplayState::GameRunning { world: _, } => {
+                *self = GameplayState::Ending { countdown: ENDING_COUNTDOWN, result };
+                Ok(())
+            },
+            GameplayState::Ending { countdown: _, result: _, } => Err(GameplayStateTransitionError::AlreadyInState),
+        }
+    }
+
+        
+    pub fn try_transition_from_ending_to_lobby(&mut self) -> Result<(), GameplayStateTransitionError> {
+        match self {
+            GameplayState::Lobby { counting_to_start: _, last_result: _ } => Err(GameplayStateTransitionError::AlreadyInState),
+            GameplayState::GameRunning { world: _ } => Err(GameplayStateTransitionError::BadState),
+            GameplayState::Ending { countdown: _, result } => {
+                *self = GameplayState::Lobby { counting_to_start: None, last_result: Some(*result) };
+                Ok(())
+            },
+        }
+    }
+
+    pub fn unexpected_transition_to_lobby(&mut self) {
+        *self = GameplayState::Lobby { counting_to_start: None, last_result: None };
     }
 }
 
@@ -441,7 +604,7 @@ mod tests {
     
         {
             let mut gameplay_state_guard = server_handler.server_context.gameplay_state.lock().unwrap();
-            gameplay_state_guard.try_transition_to_game_running().unwrap();
+            gameplay_state_guard.try_transition_from_lobby_to_gamerunning().unwrap();
 
             if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {
                 world.create_entity_npc("Tuna", Vector2F::new(10.5, 20.3), Vector2F::new(1.0, 1.0));

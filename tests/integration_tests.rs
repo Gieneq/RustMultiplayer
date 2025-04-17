@@ -159,7 +159,7 @@ where
 fn wait_until_game_started(client_handler: &MultiplayerClientHandle) {
     loop {
         std::thread::sleep(Duration::from_millis(250));
-        let response = client_handler.make_request_with_timeout(ClientRequest::GetCountdownTime, None).unwrap();
+        let response = client_handler.make_request_with_timeout(ClientRequest::GetStartCountdownTime, None).unwrap();
         if matches!(response, ClientResponse::BadState) {
             break;
         }
@@ -428,7 +428,7 @@ async fn test_check_initial_gameplay_state_should_be_lobby() {
         let response = client_handler.make_request_with_timeout(ClientRequest::CheckGameplayState, None).unwrap();
         match response {
             ClientResponse::CheckGameplayState { state } => {
-                assert!(matches!(state, GameplayStateBrief::Lobby { counting_to_start: None }));
+                assert!(matches!(state, GameplayStateBrief::Lobby { counting_to_start: None, last_result: _ }));
             },
             _ => panic!("Bad response={response:?}"),
         }
@@ -457,9 +457,9 @@ async fn test_multiple_clients_getting_ready_trigger_countdown_await_expiration(
         }
         
         // Counting should not happen before being ready
-        let response = client_handler.make_request_with_timeout(ClientRequest::GetCountdownTime, None).unwrap();
+        let response = client_handler.make_request_with_timeout(ClientRequest::GetStartCountdownTime, None).unwrap();
         match response {
-            ClientResponse::GetCountdownTime { time } => {
+            ClientResponse::GetStartCountdownTime { time } => {
                 assert!(time.is_none());
             },
             _ => panic!("Bad response={response:?}"),
@@ -478,9 +478,9 @@ async fn test_multiple_clients_getting_ready_trigger_countdown_await_expiration(
         std::thread::sleep(Duration::from_millis(100));
 
         // Here counting down should be running
-        let response = client_handler.make_request_with_timeout(ClientRequest::GetCountdownTime, None).unwrap();
+        let response = client_handler.make_request_with_timeout(ClientRequest::GetStartCountdownTime, None).unwrap();
         match response {
-            ClientResponse::GetCountdownTime { time } => {
+            ClientResponse::GetStartCountdownTime { time } => {
                 assert!(time.is_some());
                 println!("{:?}", time);
             },
@@ -515,6 +515,7 @@ async fn test_multiple_clients_getting_ready_trigger_countdown_await_expiration(
         match response {
             ClientResponse::WorldCheck { entities } => {
                 assert!(entities.len() >= clients_count);
+                println!("entities.len={}", entities.len());
             },
             _ => panic!("Bad response={response:?}"),
         };
@@ -526,7 +527,9 @@ async fn test_multiple_clients_getting_ready_trigger_countdown_await_expiration(
     let players_roles_guard = players_roles.lock().unwrap();
     assert_eq!(players_roles_guard.len(), clients_count);
     
-    let seekers_count = players_roles_guard.iter().filter(|role| matches!(role, PlayerRole::Seeker)).count();
+    let seekers_count = players_roles_guard.iter()
+        .filter(|role| matches!(role, PlayerRole::Seeker { stats: _}))
+        .count();
     assert_eq!(seekers_count, 1);
 }
 

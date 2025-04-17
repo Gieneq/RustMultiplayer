@@ -7,7 +7,7 @@ use crate::{
     app::server::{client_session::{
         ClientSessionData, 
         ClientSessionId
-    }, GameplayState}, 
+    }, GameplayResult, GameplayState}, 
     game::{
         math::Vector2F, 
         world::{
@@ -29,15 +29,36 @@ pub enum MoveDirection {
 pub enum GameplayStateBrief {
     Lobby {
         counting_to_start: Option<u32>,
+        last_result: Option<GameplayResult>
     },
     GameRunning,
+    Ending {
+        countdown: u32,
+        result: GameplayResult
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UncoverResult {
+    // None - out of range
+    // Some - in range with info:
+    //   * true - was hider
+    //   * false - was NPC
+    pub was_hider: Option<bool>,
 }
 
 impl From<&GameplayState> for GameplayStateBrief {
     fn from(value: &GameplayState) -> Self {
         match value {
-            GameplayState::Lobby { counting_to_start: counting } => GameplayStateBrief::Lobby { counting_to_start: *counting },
+            GameplayState::Lobby { counting_to_start: counting, last_result: res } => GameplayStateBrief::Lobby {
+                counting_to_start: *counting,
+                last_result: *res
+            },
             GameplayState::GameRunning { world: _ } => GameplayStateBrief::GameRunning,
+            GameplayState::Ending { countdown: counting , result: res} => GameplayStateBrief::Ending {
+                countdown: *counting, 
+                result: *res
+            },
         }
     }
 }
@@ -71,7 +92,10 @@ pub enum ClientRequest {
         dir: MoveDirection
     },
     GetRole,
-    GetCountdownTime,
+    GetStartCountdownTime,
+    TryUncover {
+        id: EntityId
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -150,8 +174,11 @@ pub enum ClientResponse {
     GetRole {
         role: PlayerRole
     },
-    GetCountdownTime {
+    GetStartCountdownTime {
         time: Option<u32>
+    },
+    TryUncover {
+        uncover_result: UncoverResult
     }
 }
 
@@ -168,5 +195,11 @@ impl EntityCheckData {
             }
         })
         .collect()
+    }
+}
+
+impl UncoverResult {
+    pub fn was_in_range(&self) -> bool {
+        self.was_hider.is_some()
     }
 }

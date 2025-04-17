@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use rand::{seq::IndexedRandom, Rng};
 
-use crate::{game::{math::Vector2F, world}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError}};
+use crate::{game::{math::Vector2F, world::{self, EntityId, PlayerRole, World}}, requests::{ClientRequest, ClientResponse, EntityCheckData, MoveDirection, SetNameError, UncoverResult}};
 
 use super::{chat::ChatMessage, client_session::{ClientSessionData, ClientSessionId, ClientSessionState}, MultiplayerServerContext};
 
@@ -59,9 +59,12 @@ pub fn route_client_request(
             ClientRequest::GetRole => {
                 get_role_route(clieant_session_data, server_context)
             },
-            ClientRequest::GetCountdownTime => {
+            ClientRequest::GetStartCountdownTime => {
                 get_countdown_time_route(server_context)
             },
+            ClientRequest::TryUncover { id } => {
+                try_uncover_route(server_context, client_session_id, clieant_session_data, id)
+            }
         },
         Err(e) => ClientResponse::BadRequest { err: format!("request={request_str}, reason={e}") },
     };
@@ -196,14 +199,13 @@ fn gameplay_state_route(server_context: Arc<MultiplayerServerContext>) -> Client
 fn world_check_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
     let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
     match &*gameplay_state_guard {
-        super::GameplayState::Lobby { counting_to_start: _ } => {
-            ClientResponse::BadState
-        },
+        super::GameplayState::Lobby { counting_to_start: _, last_result:_ } => ClientResponse::BadState,
         super::GameplayState::GameRunning { world } => {
             ClientResponse::WorldCheck { 
                 entities: EntityCheckData::vec_from_iter(world.iter_entities())
             }
         },
+        super::GameplayState::Ending { countdown: _, result: _ } => ClientResponse::BadState,
     }
 }
 
@@ -230,9 +232,8 @@ fn move_route(
     let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
 
     match &mut *gameplay_state_guard {
-        super::GameplayState::Lobby { counting_to_start: _ } => {
-            ClientResponse::BadState
-        },
+        super::GameplayState::Lobby { counting_to_start: _, last_result:_ } => ClientResponse::BadState,
+        super::GameplayState::Ending { countdown: _ , result: _ } => ClientResponse::BadState,
         super::GameplayState::GameRunning { world } => {
             let player_info = world
                 .get_entity_by_id(player_entity_id)
@@ -279,7 +280,7 @@ fn get_role_route(
     
     let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
     match &*gameplay_state_guard {
-        super::GameplayState::Lobby { counting_to_start: _ } => ClientResponse::BadState,
+        super::GameplayState::Lobby { counting_to_start: _, last_result:_ } => ClientResponse::BadState,
         super::GameplayState::GameRunning { world } => {
             match world.get_entity_by_id(entity_id) {
                 Some(e) => {
@@ -292,15 +293,83 @@ fn get_role_route(
                 None => ClientResponse::EntityNotFound { id: entity_id }
             }
         },
+        super::GameplayState::Ending { countdown: _ , result: _ } => ClientResponse::BadState,
     }
 }
 
 fn get_countdown_time_route(server_context: Arc<MultiplayerServerContext>) -> ClientResponse {
     let gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
     match &*gameplay_state_guard {
-        super::GameplayState::Lobby { counting_to_start } => {
-            ClientResponse::GetCountdownTime { time: *counting_to_start }
+        super::GameplayState::Lobby { counting_to_start, last_result:_ } => {
+            ClientResponse::GetStartCountdownTime { time: *counting_to_start }
         },
         super::GameplayState::GameRunning { world: _ } => ClientResponse::BadState,
+        super::GameplayState::Ending { countdown: _ , result: _ } => ClientResponse::BadState,
+    }
+}
+
+fn try_uncover_route(
+    server_context: Arc<MultiplayerServerContext>,
+    client_session_id: ClientSessionId, 
+    clieant_session_data: Arc<Mutex<ClientSessionData>>,
+    uncovering_entity_id: EntityId
+) -> ClientResponse {
+    let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
+    match &mut *gameplay_state_guard {
+        super::GameplayState::GameRunning { world } => {
+            // Find entity of the client
+            let client_entity_id = {
+                let client_data_guard = clieant_session_data.lock().unwrap();
+                match client_data_guard.get_entity_player_id() {
+                    Some(entitiy_id) => entitiy_id,
+                    None => {
+                        return ClientResponse::OtherError { err: "Client handler no entity attached".to_string() };
+                    }
+                }
+            };
+
+            // Check if can uncover
+            let can_uncover = {
+                let (client_entity, other_entity) = match (world.get_entity_by_id(client_entity_id), world.get_entity_by_id(uncovering_entity_id)) {
+                    (Some(entity_c), Some(entity_o)) => (entity_c, entity_o),
+                    (None, _) => {
+                        return ClientResponse::EntityNotFound { id: client_entity_id }
+                    }, 
+                    (_, None) => {
+                        return ClientResponse::EntityNotFound { id: uncovering_entity_id }
+                    }, 
+                };
+
+                World::is_entity_inrange(client_entity.position, other_entity.position)
+            };
+
+            // Can use unwrap, both entities are proved now
+            if can_uncover {
+                let was_hider = world.get_entity_by_id(uncovering_entity_id).unwrap()
+                    .get_player_role()
+                    .is_some_and(|role| matches!(role, PlayerRole::Hider { stats: _ }));
+
+                if was_hider {
+                    // Uncover hider player
+                    let hider_entity = world.get_entity_by_id_mut(uncovering_entity_id).unwrap();
+                    hider_entity.set_hider_covered(false).unwrap();
+
+                } else {
+                    // Remove NPC and punish seeker
+                    world.remove_entity(uncovering_entity_id).unwrap();
+
+                    let seeker_entity = world.get_entity_by_id_mut(client_entity_id).unwrap();
+                    seeker_entity.punish_seeker().unwrap();
+                }
+            } else {
+                // Notify not in range
+                return ClientResponse::TryUncover { uncover_result: UncoverResult {
+                    was_hider: None
+                } }
+            }
+
+            todo!()
+        },
+        _ => ClientResponse::BadState,
     }
 }

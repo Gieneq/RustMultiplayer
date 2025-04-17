@@ -35,6 +35,20 @@ pub enum WorldError {
 
     #[error("EntityCannotBecameSeeker")]
     EntityCannotBecameSeeker,
+
+    #[error("EntityNotPlayer")]
+    EntityNotPlayer,
+
+    #[error("EntityNotHider")]
+    EntityNotHider,
+
+    #[error("EntityNotSeeker")]
+    EntityNotSeeker,
+}
+
+pub struct SeekerHidersSummary {
+    pub seeker: Option<(EntityId, SeekerStats)>,
+    pub hiders: Vec<(EntityId, HiderStats)>,
 }
 
 #[derive(Debug)]
@@ -58,12 +72,31 @@ pub struct NpcController {
     roaming_range: Option<f32>,
     change_destination_counter: u32,
 }
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct HiderStats {
+    pub covered: bool,
+}
 
-#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SeekerStats {
+    pub remaining_ticks: u32,
+    pub remaining_failures: usize,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum PlayerRole {
-    #[default]
-    Hider,
-    Seeker
+    Hider {
+        stats: HiderStats
+    },
+    Seeker {
+        stats: SeekerStats
+    }
+}
+
+impl Default for PlayerRole {
+    fn default() -> Self {
+        Self::Hider { stats: HiderStats { covered: true } }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -192,7 +225,8 @@ impl World {
         Ok(())
     }
 
-    pub fn select_entity_as_seeker(&mut self, entity_id: EntityId) -> Result<(), WorldError> {
+    pub fn select_entity_as_seeker(&mut self, entity_id: EntityId, remaining_ticks: u32, remaining_failures: usize) -> Result<(), WorldError> {
+        assert!(remaining_ticks > 0);
         let entity = match self.get_entity_by_id_mut(entity_id) {
             Some(e) => e,
             None => {
@@ -205,7 +239,7 @@ impl World {
                 Err(WorldError::EntityCannotBecameSeeker)
             },
             EntityController::Player(player_controller) => {
-                player_controller.role = PlayerRole::Seeker;
+                player_controller.role = PlayerRole::Seeker { stats: SeekerStats { remaining_ticks, remaining_failures } };
                 Ok(())
             },
         }
@@ -424,6 +458,30 @@ impl World {
         }
     }
 
+    pub fn get_seeker_hiders_summary(&self) -> SeekerHidersSummary {
+        let mut summary = SeekerHidersSummary {
+            seeker: None,
+            hiders: vec![]
+        };
+
+        for entity in self.entities.iter() {
+            let entity_id = entity.id;
+            if let EntityController::Player(player_ctrl) = &entity.controller {
+                match player_ctrl.role {
+                    PlayerRole::Hider { stats } => summary.hiders.push((entity_id, stats)),
+                    PlayerRole::Seeker { stats } => summary.seeker = Some((entity_id, stats)),
+                }
+            }
+        }
+
+        summary
+    }
+
+    pub fn is_entity_inrange(entity_position_1: Vector2F, entity_position_2: Vector2F) -> bool {
+        const ENTITY_MAX_RANGE: f32 = TILE_SIZE * 1.5; // Slightly more than sqrt(2)
+        const ENTITY_MAX_RANGE_SQUARED: f32 = ENTITY_MAX_RANGE * ENTITY_MAX_RANGE;
+        (entity_position_1 - entity_position_2).length_squared() < ENTITY_MAX_RANGE_SQUARED
+    }
 }
 
 impl Entity {
@@ -439,6 +497,40 @@ impl Entity {
         match &self.controller {
             EntityController::Npc(_) => None,
             EntityController::Player(player_controller) => Some(&player_controller.role),
+        }
+    }
+
+    pub fn set_hider_covered(&mut self, covered: bool) -> Result<(), WorldError> {
+        match &mut self.controller {
+            EntityController::Npc(_) => Err(WorldError::EntityNotPlayer),
+            EntityController::Player(player_controller) => {
+                match &mut player_controller.role {
+                    PlayerRole::Hider { stats } => {
+                        stats.covered = covered;
+                        Ok(())
+                    },
+                    PlayerRole::Seeker { stats } => {
+                        Err(WorldError::EntityNotHider)
+                    },
+                }
+            },
+        }
+    }
+
+    pub fn punish_seeker(&mut self) -> Result<(), WorldError> {
+        match &mut self.controller {
+            EntityController::Npc(_) => Err(WorldError::EntityNotPlayer),
+            EntityController::Player(player_controller) => {
+                match &mut player_controller.role {
+                    PlayerRole::Hider { stats } => {
+                        Err(WorldError::EntityNotSeeker)
+                    },
+                    PlayerRole::Seeker { stats } => {
+                        stats.remaining_failures = stats.remaining_failures.saturating_sub(1);
+                        Ok(())
+                    },
+                }
+            },
         }
     }
 }
@@ -553,4 +645,26 @@ fn test_world_entity_free_positions() {
     let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), get_tiled_value(3));
 
     assert!(!free_tiles.contains(&entity_occupied_posiiton));
+}
+
+#[test]
+fn test_entities_positions_inrange() {
+    let p1 = get_tiled_vec(1, 2);
+    let p2 = get_tiled_vec(1, 3);
+    assert!(World::is_entity_inrange(p1, p2));
+    
+    let p1 = get_tiled_vec(1, 2);
+    let p2 = get_tiled_vec(2, 3);
+    assert!(World::is_entity_inrange(p1, p2));
+}
+
+#[test]
+fn test_entities_positions_not_inrange() {
+    let p1 = get_tiled_vec(1, 2);
+    let p2 = get_tiled_vec(1, 4);
+    assert!(!World::is_entity_inrange(p1, p2));
+    
+    let p1 = get_tiled_vec(-1, 0);
+    let p2 = get_tiled_vec(1, 0);
+    assert!(!World::is_entity_inrange(p1, p2));
 }
