@@ -46,7 +46,7 @@ pub struct MultiplayerClient {
     socket: std::net::TcpStream
 }
 
-
+#[derive(Debug)]
 pub struct MultiplayerClientHandle {
     thread_handle: std::thread::JoinHandle<()>,
     request_shutdown_tx: std::sync::mpsc::Sender<()>,

@@ -158,46 +158,52 @@ mod cli_request {
 }
 
 mod cli_player_client {
-    const SCROLL_SENSITIVITY: f32 = 0.1;
     use rust_multiplayer::{
         app::client::{
             gui_client::{
-                gui_renderer::GuiRenderer, guis::{AppGui, GuiLayout}, renderer::Renderer, AppData
+                guis::{AppGui, GuiLayout}, renderer::Renderer, AppData
             }, 
-            MultiplayerClient, 
-            MultiplayerClientHandle
-        }, 
-        requests::{ClientRequest, ClientResponse, GameplayStateBrief}
+            MultiplayerClient
+        }, game::math::Vector2F
         
     };
 
-    use std::{sync::{
-        Arc, 
-        Mutex
-    }, time::Instant};
+    use std::{
+        cell::RefCell, 
+        rc::Rc, 
+        sync::Arc, 
+        time::Instant
+    };
 
     use winit::{
         application::ApplicationHandler, 
+        dpi::{
+            PhysicalPosition, 
+            PhysicalSize
+        }, 
         event::WindowEvent, 
         event_loop::{
             ActiveEventLoop, 
             ControlFlow, 
             EventLoop
-        }, 
-        window::{
+        }, window::{
             Window, 
             WindowId
         }
     };
 
+    const INITIAL_WINDOW_SIZE: Vector2F = Vector2F { x: 800.0, y: 600.0 };
+
     struct App {
         renderer: Option<Renderer>,
-        data: Arc<Mutex<AppData>>,
-        client_handler: Option<MultiplayerClientHandle>,
         last_draw_time: Instant,
+        last_cursor_position: PhysicalPosition<f64>,    
+        active_app_gui: AppGui,
+        app_data: Rc<RefCell<AppData>>,
     }
 
     impl ApplicationHandler for App {
+
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             // Create window object
             let window = Arc::new(
@@ -206,6 +212,8 @@ mod cli_player_client {
                     .unwrap(),
             );
 
+            let _ = window.request_inner_size(PhysicalSize::new(INITIAL_WINDOW_SIZE.x, INITIAL_WINDOW_SIZE.y));
+
             let renderer = pollster::block_on(Renderer::new(window.clone()));
             self.renderer = Some(renderer);
 
@@ -213,15 +221,14 @@ mod cli_player_client {
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-            let state = self.renderer.as_mut().unwrap();
-            let mut app_data_guardapp_data_guard = self.data.lock().unwrap();
+            let renderer = self.renderer.as_mut().unwrap();
 
             match event {
                 WindowEvent::CloseRequested => {
                     println!("The close button was pressed; stopping");
                     event_loop.exit();
 
-                    let client_handler = self.client_handler.take().unwrap();
+                    let client_handler = self.app_data.borrow_mut().client_handler.take().unwrap();
                     client_handler.wait_until_finished().unwrap()
                 }
                 WindowEvent::RedrawRequested => {
@@ -230,33 +237,49 @@ mod cli_player_client {
                     let now = Instant::now();
                     let dt = now.duration_since(self.last_draw_time);
 
+                    {
+                        // Check if should make transition
+                        let mut app_data = self.app_data.borrow_mut();
+                        if let Some(next_app_gui) = app_data.app_gui_expected_transition.take() {
+                            self.active_app_gui.transition(next_app_gui);
+                        }
+                    }
+
                     if dt >= TARGET_FRAME_INTERVAL {
                         self.last_draw_time = now;
+                        self.active_app_gui.update(dt);
     
-                        app_data_guardapp_data_guard.active_app_gui.update(dt);
-    
-                        let gui_renderer = GuiRenderer {};
-                        app_data_guardapp_data_guard.active_app_gui.draw(&gui_renderer);
+                        renderer.batch_clear();
+                        self.active_app_gui.draw(renderer);
+                        renderer.render();
                     }
 
                     // Emits a new redraw requested event.
-                    state.get_window().request_redraw();
-                }
+                    renderer.get_window().request_redraw();
+                },
                 WindowEvent::Resized(size) => {
                     // Reconfigures the size of the surface. We do not re-render
                     // here as this event is always followed up by redraw request.
-                    state.resize(size);
+                    self.active_app_gui.resize_window(size.width as f32, size.height as f32);
+                    renderer.resize(size);
                 },
-                WindowEvent::MouseWheel { 
-                    device_id: _, 
-                    delta, 
-                    phase: _ 
-                } => {
-                    app_data_guardapp_data_guard.active_app_gui.process_mouse_wheele(delta);
+                WindowEvent::MouseWheel {
+                    device_id: _, delta,  phase: _ } => {
+                    self.active_app_gui.process_mouse_wheele(delta);
                 },
                 WindowEvent::KeyboardInput { device_id: _, event, is_synthetic: _ } => {
-                    app_data_guardapp_data_guard.active_app_gui.process_key_event(event);  
+                    self.active_app_gui.process_key_event(event);  
+                },
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.last_cursor_position = position;
                 }
+                WindowEvent::MouseInput { device_id: _, state, button } => {
+                    self.active_app_gui.process_mouse_events(
+                        self.last_cursor_position,
+                        state,
+                        button
+                    )
+                },
                 _ => (),
             }
         }
@@ -273,21 +296,26 @@ mod cli_player_client {
         // possible, like games.
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let mut app = App {
-            data: Arc::new(Mutex::new(AppData {
-                active_app_gui: AppGui::new()
-            })),
-            last_draw_time: Instant::now(),
-            client_handler: None,
-            renderer: None
-        };
-        
         let client_handler = MultiplayerClient::connect(addr).unwrap()
             .run().unwrap();
 
-        // Client has no name so far, GUI remains default: not connected
+        let app_data = Rc::new(RefCell::new(AppData { 
+            client_handler: Some(client_handler),
+            player_name,
+            app_gui_expected_transition: None,
+            last_width: INITIAL_WINDOW_SIZE.x,
+            last_height: INITIAL_WINDOW_SIZE.y, 
+        }));
 
-        app.client_handler = Some(client_handler);
+        let mut app = App {
+            active_app_gui: AppGui::new(app_data.clone()),
+            last_draw_time: Instant::now(),
+            app_data,
+            renderer: None,
+            last_cursor_position: PhysicalPosition::new(0.0, 0.0),
+        };
+        
+        // Client has no name so far, GUI remains default: not connected
 
         event_loop.run_app(&mut app).unwrap();
     }

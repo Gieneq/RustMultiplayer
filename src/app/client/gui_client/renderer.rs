@@ -14,7 +14,9 @@ use wgpu::{
 
 use winit::window::Window;
 
-use super::AppData;
+use crate::game::math::Vector2F;
+
+use super::{guis::GuiElement};
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -53,6 +55,21 @@ fn create_ndc_rect_quad_vertices(x: f32, y: f32, w: f32, h: f32) -> (Vec<Vertex>
     (vertex_data, indices_data)
 }
 
+pub struct RenderBatch {
+    gui_elements: Vec<GuiElement>,
+    gui_scale: f32,
+
+    // entity_element
+    camera: Vector2F,
+    scale: f32,
+}
+
+impl RenderBatch {
+    fn new() -> Self {
+        Self { gui_elements: vec![], gui_scale: 0.1, camera: Vector2F::zero(), scale: 0.05 }
+    }
+}
+
 pub struct Renderer {
     window: Arc<Window>,
     device: wgpu::Device,
@@ -62,6 +79,7 @@ pub struct Renderer {
     surface_format: wgpu::TextureFormat,
     render_pipeline: RenderPipeline,
     uniform_bind_group_layout: wgpu::BindGroupLayout,
+    render_batch: RenderBatch,
 }
 
 impl Renderer {
@@ -118,7 +136,8 @@ impl Renderer {
             surface,
             surface_format,
             render_pipeline,
-            uniform_bind_group_layout
+            uniform_bind_group_layout,
+            render_batch: RenderBatch::new()
         };
 
         // Configure surface for the first time
@@ -213,113 +232,190 @@ impl Renderer {
         // TODO maybe configure pipeline (surface dependant)
     }
 
-    // pub fn render(&mut self,
-    //     app_data: &AppData
-    // ) {
-    //     // Create texture view
-    //     let surface_texture = self.surface.get_current_texture()
-    //         .expect("failed to acquire next swapchain texture");
-    //     let texture_view = surface_texture.texture
-    //         .create_view(&wgpu::TextureViewDescriptor {
-    //             // Without add_srgb_suffix() the image we will be working with
-    //             // might not be "gamma correct".
-    //             format: Some(self.surface_format.add_srgb_suffix()),
-    //             ..Default::default()
-    //         });
+    pub fn batch_clear(&mut self) {
+        self.render_batch.gui_elements.clear();
+    }
 
-    //     // Renders a GREEN screen
-    //     let mut encoder = self.device.create_command_encoder(&Default::default());
+    pub fn batch_append_gui_element(&mut self, element: GuiElement) {
+        // println!("Append element ")
+        self.render_batch.gui_elements.push(element);
+    }
+    
+    pub fn render(&mut self) {
+        // Create texture view
+        let surface_texture = self.surface.get_current_texture()
+            .expect("failed to acquire next swapchain texture");
 
-    //     // Create the renderpass which will clear the screen.
-    //     {
-    //         let mut renderpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-    //             label: Some("Render Pass"),
-    //             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-    //                 view: &texture_view,
-    //                 resolve_target: None,
-    //                 ops: wgpu::Operations {
-    //                     // Clear with a dark gray color.
-    //                     load: wgpu::LoadOp::Clear(wgpu::Color {
-    //                         r: 0.1,
-    //                         g: 0.1,
-    //                         b: 0.1,
-    //                         a: 1.0
-    //                     }),
-    //                     store: wgpu::StoreOp::Store,
-    //                 },
-    //             })],
-    //             depth_stencil_attachment: None,
-    //             timestamp_writes: None,
-    //             occlusion_query_set: None,
-    //         });
+        let texture_view = surface_texture.texture
+            .create_view(&wgpu::TextureViewDescriptor {
+                // Without add_srgb_suffix() the image we will be working with
+                // might not be "gamma correct".
+                format: Some(self.surface_format.add_srgb_suffix()),
+                ..Default::default()
+            });
 
-    //         // renderpass.push_debug_group("Prepare data for draw.");
+        let mut encoder = self.device.create_command_encoder(&Default::default());
 
-    //         // If you wanted to call any drawing commands, they would go here.
-    //         renderpass.set_pipeline(&self.render_pipeline);
+        {
+            // Create the renderpass
+            let mut renderpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &texture_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        // Clear with a dark gray color.
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.1,
+                            g: 0.1,
+                            b: 0.1,
+                            a: 1.0
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
 
-    //         let aspect_ratio = self.size.width as f32 / self.size.height as f32;
-    //         let scale_x = app_data.scale / aspect_ratio;
-    //         let scale_y = app_data.scale;
+            // If you wanted to call any drawing commands, they would go here.
+            renderpass.set_pipeline(&self.render_pipeline);
 
-    //         app_data.entities.iter().for_each(|ev| {
+            let aspect_ratio = self.size.width as f32 / self.size.height as f32;
 
-    //             let uniform = Uniforms { color: [ev.color[0], ev.color[1], ev.color[2], 1.0] };
-    //             let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //                 label: Some("Entity Uniform Buffer"),
-    //                 contents: bytemuck::cast_slice(&[uniform]),
-    //                 usage: wgpu::BufferUsages::UNIFORM,
-    //             });
-        
-    //             // Create a bind group for this entity's uniform buffer.
-    //             let entity_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-    //                 label: Some("Entity Bind Group"),
-    //                 layout: &self.uniform_bind_group_layout, // stored during initialization
-    //                 entries: &[wgpu::BindGroupEntry {
-    //                     binding: 0,
-    //                     resource: uniform_buffer.as_entire_binding(),
-    //                 }],
-    //             });
+            // Entities 
+            self.render_entities(&mut renderpass, aspect_ratio);
+            // GUIs
+            self.render_guis(&mut renderpass); 
+        }
 
-    //             // --- Create the rectangle vertex and index buffers ---
-    //             let (vertices, indices) = create_ndc_rect_quad_vertices(
-    //                 (ev.position.x - app_data.camera_position.x) * scale_x,
-    //                 (ev.position.y - app_data.camera_position.y) * scale_y,
-    //                 ev.size.x * scale_x,
-    //                 ev.size.y * scale_y
-    //             );
+        // Submit the command in the queue to execute
+        self.queue.submit([encoder.finish()]);
+        self.window.pre_present_notify();
+        surface_texture.present();
+    }
 
-    //             let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //                 label: Some("Rect Vertex Buffer"),
-    //                 contents: bytemuck::cast_slice(&vertices),
-    //                 usage: wgpu::BufferUsages::VERTEX,
-    //             });
+    fn render_entities(&mut self, renderpass: &mut wgpu::RenderPass<'_>, aspect_ratio: f32) {
+        // let scale_x = app_data.scale / aspect_ratio;
+        // let scale_y = app_data.scale;
 
-    //             let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-    //                 label: Some("Rect Index Buffer"),
-    //                 contents: bytemuck::cast_slice(&indices),
-    //                 usage: wgpu::BufferUsages::INDEX,
-    //             });
+        // app_data.entities.iter().for_each(|ev| {
 
-        
-    //             // Bind the uniform bind group (group 0).
-    //             renderpass.set_bind_group(0, &entity_bind_group, &[]);
+        //     let uniform = Uniforms { color: [ev.color[0], ev.color[1], ev.color[2], 1.0] };
+        //     let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: Some("Entity Uniform Buffer"),
+        //         contents: bytemuck::cast_slice(&[uniform]),
+        //         usage: wgpu::BufferUsages::UNIFORM,
+        //     });
+    
+        //     // Create a bind group for this entity's uniform buffer.
+        //     let entity_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //         label: Some("Entity Bind Group"),
+        //         layout: &self.uniform_bind_group_layout, // stored during initialization
+        //         entries: &[wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: uniform_buffer.as_entire_binding(),
+        //         }],
+        //     });
 
-    //             renderpass.set_vertex_buffer(0, vertex_buffer.slice(..));
-    //             renderpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        //     // --- Create the rectangle vertex and index buffers ---
+        //     let (vertices, indices) = create_ndc_rect_quad_vertices(
+        //         (ev.position.x - app_data.camera_position.x) * scale_x,
+        //         (ev.position.y - app_data.camera_position.y) * scale_y,
+        //         ev.size.x * scale_x,
+        //         ev.size.y * scale_y
+        //     );
+
+        //     let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: Some("Rect Vertex Buffer"),
+        //         contents: bytemuck::cast_slice(&vertices),
+        //         usage: wgpu::BufferUsages::VERTEX,
+        //     });
+
+        //     let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        //         label: Some("Rect Index Buffer"),
+        //         contents: bytemuck::cast_slice(&indices),
+        //         usage: wgpu::BufferUsages::INDEX,
+        //     });
+
+    
+        //     // Bind the uniform bind group (group 0).
+        //     renderpass.set_bind_group(0, &entity_bind_group, &[]);
+
+        //     renderpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        //     renderpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
 
-    //             // Draw the rectangle using 6 indices.
-    //             renderpass.draw_indexed(0..indices.len() as u32, 0, 0..1);
-    //         });   
+        //     // Draw the rectangle using 6 indices.
+        //     renderpass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+        // });   
+    }
 
-    //         // renderpass.pop_debug_group();
-    //         // renderpass.insert_debug_marker("Draw!");
-    //     }
-
-    //     // Submit the command in the queue to execute
-    //     self.queue.submit([encoder.finish()]);
-    //     self.window.pre_present_notify();
-    //     surface_texture.present();
-    // }
+    fn render_guis(&mut self, renderpass: &mut wgpu::RenderPass<'_>) {
+        // TODO overall bad performance with iteration and uniform usage
+        // let scale_x = self.render_batch.gui_scale / aspect_ratio;
+        // let scale_y = self.render_batch.gui_scale;
+    
+        self.render_batch.gui_elements.iter().for_each(|gui_element| {
+            let (gui_element_rect, gui_element_color) = match gui_element {
+                GuiElement::Box(gui_box) => (gui_box.rect, gui_box.color),
+            };
+    
+            let float_color = [
+                gui_element_color.0 as f32 / 255.0, 
+                gui_element_color.1 as f32 / 255.0, 
+                gui_element_color.2 as f32 / 255.0, 
+                1.0
+            ];
+    
+            let uniform = Uniforms { color: float_color };
+    
+            let uniform_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Entity Uniform Buffer"),
+                contents: bytemuck::cast_slice(&[uniform]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            
+            // Create a bind group for this entity's uniform buffer.
+            let entity_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Entity Bind Group"),
+                layout: &self.uniform_bind_group_layout, // stored during initialization
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                }],
+            });
+    
+            // --- Create the rectangle vertex and index buffers ---
+            let (vertices, indices) = create_ndc_rect_quad_vertices(
+                (gui_element_rect.pos.x / self.size.width as f32) * 2.0 - 1.0,
+                1.0 - ((gui_element_rect.pos.y + gui_element_rect.size.y) / self.size.height as f32) * 2.0,
+                (gui_element_rect.size.x / self.size.width as f32) * 2.0,
+                (gui_element_rect.size.y / self.size.height as f32) * 2.0
+            );
+    
+            let vertex_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Rect Vertex Buffer"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+    
+            let index_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Rect Index Buffer"),
+                contents: bytemuck::cast_slice(&indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+            
+            // Bind the uniform bind group (group 0).
+            renderpass.set_bind_group(0, &entity_bind_group, &[]);
+    
+            renderpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+            renderpass.set_index_buffer(index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+    
+    
+            // Draw the rectangle using 6 indices.
+            renderpass.draw_indexed(0..indices.len() as u32, 0, 0..1);
+        });
+    }
 }
