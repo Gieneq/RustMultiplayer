@@ -52,7 +52,7 @@ struct PlayerClientArgs {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .format_file(false)
         .format_line_number(true)
@@ -161,44 +161,40 @@ mod cli_player_client {
     const SCROLL_SENSITIVITY: f32 = 0.1;
     use rust_multiplayer::{
         app::client::{
-            rendering::{
-                renderer::State, 
-                AppData
+            gui_client::{
+                gui_renderer::GuiRenderer, guis::{AppGui, GuiLayout}, renderer::Renderer, AppData
             }, 
             MultiplayerClient, 
             MultiplayerClientHandle
         }, 
-        requests::{ClientRequest, MoveDirection}
+        requests::{ClientRequest, ClientResponse, GameplayStateBrief}
         
     };
 
-    use std::sync::{
+    use std::{sync::{
         Arc, 
         Mutex
-    };
+    }, time::Instant};
 
     use winit::{
-        application::ApplicationHandler, event::{
-            ElementState, 
-            WindowEvent
-        }, 
+        application::ApplicationHandler, 
+        event::WindowEvent, 
         event_loop::{
             ActiveEventLoop, 
             ControlFlow, 
             EventLoop
         }, 
-        keyboard::Key, 
         window::{
             Window, 
             WindowId
         }
     };
 
-    #[derive(Default)]
     struct App {
-        state: Option<State>,
+        renderer: Option<Renderer>,
         data: Arc<Mutex<AppData>>,
-        client_handler: Option<MultiplayerClientHandle>
+        client_handler: Option<MultiplayerClientHandle>,
+        last_draw_time: Instant,
     }
 
     impl ApplicationHandler for App {
@@ -210,29 +206,38 @@ mod cli_player_client {
                     .unwrap(),
             );
 
-            let state = pollster::block_on(State::new(window.clone()));
-            self.state = Some(state);
+            let renderer = pollster::block_on(Renderer::new(window.clone()));
+            self.renderer = Some(renderer);
 
             window.request_redraw();
         }
 
         fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-            let state = self.state.as_mut().unwrap();
+            let state = self.renderer.as_mut().unwrap();
+            let mut app_data_guardapp_data_guard = self.data.lock().unwrap();
+
             match event {
                 WindowEvent::CloseRequested => {
                     println!("The close button was pressed; stopping");
                     event_loop.exit();
 
-                    let rt = tokio::runtime::Runtime::new().unwrap();
-                    rt.block_on(async move {
-                        let client_handler = self.client_handler.take().unwrap();
-                        client_handler.wait_until_finished().unwrap()
-                    });
+                    let client_handler = self.client_handler.take().unwrap();
+                    client_handler.wait_until_finished().unwrap()
                 }
                 WindowEvent::RedrawRequested => {
-                    if let Ok(app_data_guard) = self.data.lock() {
-                        state.render(&app_data_guard)
-                    };
+                    const TARGET_FRAME_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+
+                    let now = Instant::now();
+                    let dt = now.duration_since(self.last_draw_time);
+
+                    if dt >= TARGET_FRAME_INTERVAL {
+                        self.last_draw_time = now;
+    
+                        app_data_guardapp_data_guard.active_app_gui.update(dt);
+    
+                        let gui_renderer = GuiRenderer {};
+                        app_data_guardapp_data_guard.active_app_gui.draw(&gui_renderer);
+                    }
 
                     // Emits a new redraw requested event.
                     state.get_window().request_redraw();
@@ -247,45 +252,15 @@ mod cli_player_client {
                     delta, 
                     phase: _ 
                 } => {
-                    match delta {
-                        winit::event::MouseScrollDelta::LineDelta(_, y) => {
-                            // y is +-1
-                            if let Ok(mut app_data_guard) = self.data.lock() {
-                                app_data_guard.scale *= (1.0 + SCROLL_SENSITIVITY).powf(y);
-                            }
-                        },
-                        winit::event::MouseScrollDelta::PixelDelta(_physical_position) => todo!(),
-                    }
+                    app_data_guardapp_data_guard.active_app_gui.process_mouse_wheele(delta);
                 },
                 WindowEvent::KeyboardInput { device_id: _, event, is_synthetic: _ } => {
-                    if event.state == ElementState::Released {
-                        let client_handler = self.client_handler.as_ref().unwrap();
-                        match event.logical_key {
-                            Key::Named(winit::keyboard::NamedKey::ArrowUp) => {
-                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Up);
-                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Up} );
-                            },
-                            Key::Named(winit::keyboard::NamedKey::ArrowRight) => {
-                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Right);
-                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Right} );
-                            },
-                            Key::Named(winit::keyboard::NamedKey::ArrowDown) => {
-                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Down);
-                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Down} );
-                            },
-                            Key::Named(winit::keyboard::NamedKey::ArrowLeft) => {
-                                // self.client_handler.as_ref().unwrap().move_headless(MoveDirection::Left);
-                                let _ = client_handler.make_request(ClientRequest::Move { dir: MoveDirection::Left} );
-                            },
-                            _ => {}
-                        }
-                    }    
+                    app_data_guardapp_data_guard.active_app_gui.process_key_event(event);  
                 }
                 _ => (),
             }
         }
     }
-
 
     pub fn run<A: std::net::ToSocketAddrs + std::fmt::Debug>(addr: A, player_name: Option<String>) {
         // wgpu uses `log` for all of our logging, so we initialize a logger with the `env_logger` crate.
@@ -298,22 +273,19 @@ mod cli_player_client {
         // possible, like games.
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        // When the current loop iteration finishes, suspend the thread until
-        // another event arrives. Helps keeping CPU utilization low if nothing
-        // is happening, which is preferred if the application might be idling in
-        // the background.
-        // event_loop.set_control_flow(ControlFlow::Wait);
-
         let mut app = App {
             data: Arc::new(Mutex::new(AppData {
-                scale: 0.5,
-                ..Default::default()
+                active_app_gui: AppGui::new()
             })),
-            ..Default::default()
+            last_draw_time: Instant::now(),
+            client_handler: None,
+            renderer: None
         };
         
         let client_handler = MultiplayerClient::connect(addr).unwrap()
             .run().unwrap();
+
+        // Client has no name so far, GUI remains default: not connected
 
         app.client_handler = Some(client_handler);
 

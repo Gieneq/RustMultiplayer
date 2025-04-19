@@ -1,4 +1,4 @@
-pub mod rendering;
+pub mod gui_client;
 use std::{io::{BufRead, Write}, time::{Duration, Instant}};
 
 use crate::requests::{ClientRequest, ClientResponse};

@@ -108,10 +108,15 @@ pub struct EntityCheckData {
     pub is_npc: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
 pub enum SetNameError {
+    #[error("NameEmpty")]
     NameEmpty,
+    
+    #[error("NameAlreadyUsed")]
     NameAlreadyUsed,
+    
+    #[error("NameGenerateExhausted")]
     NameGenerateExhausted,
 }
 
