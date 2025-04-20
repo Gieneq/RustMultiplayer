@@ -13,7 +13,7 @@ use crate::game::math::Rect2F;
 use super::{renderer::Renderer, AppData};
 use self::{disconnected::DisconnectedGuiLayout, ending::EndingGuiLayout, ingame::IngameGuiLayout, lobby::LobbyGuiLayout};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct GuiBox {
     pub rect: Rect2F,
     pub color: RgbColor
@@ -175,12 +175,78 @@ pub mod components {
         }
     }
 
+    #[derive(Debug)]
+    pub enum PlayerRoleLayout {
+        Seeker(SeekerLayout),
+        Hider(HiderLayout)
+    }
+
+    #[derive(Debug)]
+    pub struct SeekerLayout {
+
+    }
+
+    #[derive(Debug)]
+    pub struct HiderLayout {
+
+    }
+
+    #[derive(Debug)]
+    pub struct GuiProgressBar {
+        pub rect: Rect2F,
+        pub color_middle: RgbColor,
+        pub color_bg: RgbColor,
+        pub color_frame: RgbColor,
+        percentage: f32,
+    }
+
+    impl GuiProgressBar {
+        pub fn new(rect: Rect2F, color_middle: RgbColor, color_bg: RgbColor, color_frame: RgbColor) -> Self {
+            Self { rect, color_middle, color_bg, color_frame, percentage: 0.0 }
+        }
+
+        pub fn set_percantage(&mut self, percentage: f32) {
+            self.percentage = percentage.clamp(0.0, 100.0);
+        }
+
+        pub fn get_drawable_rects(&self) -> (GuiBox, GuiBox, GuiBox) {
+            let inner_rest = Rect2F::new(
+                self.rect.pos.x + super::BORDER_SIZE, 
+                self.rect.pos.y + super::BORDER_SIZE, 
+                self.rect.size.x - 2.0 * super::BORDER_SIZE,
+                self.rect.size.y - 2.0 * super::BORDER_SIZE
+            );
+
+            let progress_rect = Rect2F::new(
+                inner_rest.pos.x, 
+                inner_rest.pos.y, 
+                inner_rest.size.x * self.percentage / 100.0,
+                inner_rest.size.y
+            );
+
+            ( 
+                GuiBox {
+                    rect: self.rect,
+                    color: self.color_frame
+                },
+                GuiBox {
+                    rect: inner_rest,
+                    color: self.color_bg
+                },
+                GuiBox {
+                    rect: progress_rect,
+                    color: self.color_middle
+                }
+            )
+        }
+    }
+
     pub mod templates {
         use clap::builder::styling::RgbColor;
 
         use crate::game::math::{Rect2F, Vector2F};
 
-        use super::{GuiPlainButton, GuiToggleButton, GuiIndicator};
+        use super::{GuiIndicator, GuiPlainButton, GuiProgressBar, GuiToggleButton};
 
         pub enum GuiComponentSize {
             Small,
@@ -226,7 +292,20 @@ pub mod components {
                 RgbColor(0, 186, 22), 
                 RgbColor(45, 61, 47), 
             )
+        }
 
+        pub fn build_gui_progress_bar(pos: Vector2F, component_size: GuiComponentSize) -> GuiProgressBar {
+            let size = match component_size {
+                GuiComponentSize::Small => Vector2F { x: 100.0, y: 32.0 },
+                GuiComponentSize::Medium => Vector2F { x: 200.0, y: 48.0 },
+                GuiComponentSize::Big => Vector2F { x: 400.0, y: 64.0 },
+            };
+            GuiProgressBar::new(
+                Rect2F { pos, size }, 
+                RgbColor(130, 217, 214), 
+                RgbColor(38, 38, 38), 
+                RgbColor(92, 92, 92)
+            )
         }
     }
 }
@@ -234,17 +313,17 @@ pub mod components {
 pub trait GuiLayout {
     fn new(app_data: Rc<RefCell<AppData>>) -> Self;
 
-    fn resize_window(&mut self, width: f32, height: f32) { }
+    fn resize_window(&mut self, _width: f32, _height: f32) { }
 
-    fn draw(&self, renderer: &mut Renderer) { }
+    fn draw(&self, _renderer: &mut Renderer) { }
     
-    fn process_key_event(&mut self, event: KeyEvent) { }
+    fn process_key_event(&mut self, _event: KeyEvent) { }
 
-    fn process_mouse_wheele(&mut self, delta: MouseScrollDelta) { }
+    fn process_mouse_wheele(&mut self, _delta: MouseScrollDelta) { }
 
-    fn process_mouse_events(&mut self, position: PhysicalPosition<f64>, button_state: ElementState, button: MouseButton) { }
+    fn process_mouse_events(&mut self, _position: PhysicalPosition<f64>, _button_state: ElementState, _button: MouseButton) { }
 
-    fn update(&mut self, dt: std::time::Duration) { }
+    fn update(&mut self, _dt: std::time::Duration) { }
 }
 
 #[derive(Debug)]
@@ -315,11 +394,21 @@ impl GuiLayout for AppGui {
     }
 
     fn process_key_event(&mut self, event: KeyEvent) {
-        unimplemented!()
+        match self {
+            AppGui::Disconnected { gui } => gui.process_key_event(event),
+            AppGui::Lobby { gui }  => gui.process_key_event(event),
+            AppGui::Ingame { gui }  => gui.process_key_event(event),
+            AppGui::Ending { gui }  => gui.process_key_event(event),
+        }
     }
 
     fn process_mouse_wheele(&mut self, delta: MouseScrollDelta) {
-        unimplemented!()
+        match self {
+            AppGui::Disconnected { gui } => gui.process_mouse_wheele(delta),
+            AppGui::Lobby { gui }  => gui.process_mouse_wheele(delta),
+            AppGui::Ingame { gui }  => gui.process_mouse_wheele(delta),
+            AppGui::Ending { gui }  => gui.process_mouse_wheele(delta),
+        }
     }
 }
 

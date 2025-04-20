@@ -21,7 +21,7 @@ use client_session::{
 use rand::seq::{IndexedRandom, IteratorRandom};
 use serde::{Deserialize, Serialize};
 
-use crate::game::{math::Vector2F, world::{get_tiled_value, World, WorldError, ENTITY_SIZE}};
+use crate::{app::{SEEKING_MAX_TIME, SEEKING_MAX_TRIES}, game::{math::Vector2F, world::{get_tiled_value, World, WorldError, ENTITY_SIZE}}};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -437,9 +437,6 @@ impl MultiplayerServer {
         rng: &mut rand::prelude::ThreadRng,
         generation_range: f32
     ) -> Result<(), StartGameError> {
-        const SEEKING_MAX_TIME: u32 = 2000;
-        const SEEKING_MAX_TRIES: usize = 3;
-
         let mut clients_guard = clients.lock().unwrap();
 
         let seeker_client_id = *clients_guard.keys().choose(rng).unwrap();

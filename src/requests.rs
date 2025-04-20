@@ -99,6 +99,13 @@ pub enum ClientRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub enum EntityType {
+    Npc,
+    Hider,
+    Seeker
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EntityCheckData {
     pub position: Vector2F,
     pub size: Vector2F,
@@ -106,6 +113,7 @@ pub struct EntityCheckData {
     pub id: EntityId,
     pub name: String,
     pub is_npc: bool,
+    pub entity_type: EntityType,
 }
 
 #[derive(Debug, thiserror::Error, Serialize, Deserialize)]
@@ -190,13 +198,25 @@ pub enum ClientResponse {
 impl EntityCheckData {
     pub fn vec_from_iter<'a, I: Iterator<Item = &'a Entity>>(iter: I) -> Vec<Self> {
         iter.map(|e| {
+
+            let entity_type = if e.is_player() {
+                // Can unwrap, it is player we know
+                match e.get_player_role().unwrap() {
+                    PlayerRole::Hider { stats: _ } => EntityType::Hider,
+                    PlayerRole::Seeker { stats: _ } => EntityType::Seeker,
+                }
+            } else {
+                EntityType::Npc
+            };
+
             EntityCheckData {
                 name: e.name.clone(),
                 id: e.id,
                 color: e.color,
                 position: e.position,
                 is_npc: !e.is_player(),
-                size: e.size
+                size: e.size,
+                entity_type
             }
         })
         .collect()

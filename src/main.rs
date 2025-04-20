@@ -243,6 +243,11 @@ mod cli_player_client {
                     let dt = now.duration_since(self.last_draw_time);
 
                     {
+                        let app_data = self.app_data.borrow();
+                        renderer.batch_set_camera(app_data.camera, app_data.world_scale);
+                    }
+
+                    {
                         // Check if should make transition
                         let next_app_gui = {
                             let mut app_data = self.app_data.borrow_mut();
@@ -320,6 +325,8 @@ mod cli_player_client {
             app_gui_expected_transition: None,
             last_width: INITIAL_WINDOW_SIZE.x,
             last_height: INITIAL_WINDOW_SIZE.y, 
+            world_scale: 0.02,
+            camera: Vector2F::zero(),
         }));
 
         let mut app = App {

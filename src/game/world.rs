@@ -155,16 +155,18 @@ impl World {
 
     pub fn create_entity_player<S: AsRef<str>>(&mut self, name: S, intial_position: Vector2F, size: Vector2F) -> EntityId {
         let intial_position = Self::get_grid_aligned_position(&intial_position);
-        let colors = [
-            [255, 0, 0],
-            [0, 255, 0],
-            [0, 0, 255],
-            [255, 0, 255],
-            [0, 255, 255],
-            [255, 255, 0],
-        ];
-        let mut rng = rand::rng();
-        let color = *colors.choose(&mut rng).unwrap();
+        // let colors = [
+        //     [255, 0, 0],
+        //     [0, 255, 0],
+        //     [0, 0, 255],
+        //     [255, 0, 255],
+        //     [0, 255, 255],
+        //     [255, 255, 0],
+        // ];
+        // let mut rng = rand::rng();
+        // let color = *colors.choose(&mut rng).unwrap();
+        let channel = rand::random_range(35..150);
+        let color = [channel, channel, channel];
         self.create_entity(
             name, 
             intial_position, 
