@@ -10,6 +10,7 @@ pub struct EndingGuiLayout {
 
 impl GuiLayout for EndingGuiLayout {
     fn new(app_data: Rc<RefCell<AppData>>) -> Self {
+        log::info!("Entered 'Ending' gui");
         Self { app_data }
     }
 }

@@ -10,6 +10,7 @@ const SCROLL_SENSITIVITY: f32 = 0.1;
 
 impl GuiLayout for IngameGuiLayout {
     fn new(app_data: Rc<RefCell<AppData>>) -> Self {
+        log::info!("Entered 'Ingame' gui");
         Self { app_data }
     }
 }

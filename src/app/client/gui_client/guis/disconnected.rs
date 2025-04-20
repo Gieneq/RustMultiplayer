@@ -3,7 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use clap::builder::styling::RgbColor;
 use winit::{dpi::PhysicalPosition, event::{ElementState, MouseButton}};
 
-use crate::{app::client::gui_client::{guis::AppGuiTransition, renderer::Renderer, AppData}, game::math::{Rect2F, Vector2F}};
+use crate::{app::client::gui_client::{guis::{components::templates::{build_gui_plain_button, GuiComponentSize}, AppGuiTransition}, renderer::Renderer, AppData}, game::math::{Rect2F, Vector2F}};
 
 use super::{components::GuiPlainButton, GuiElement, GuiLayout};
 
@@ -23,10 +23,9 @@ impl GuiLayout for DisconnectedGuiLayout {
         };
 
         let mut result = Self {
-            proceed_button: GuiPlainButton::new(
-                Rect2F::new(0.0, 0.0, 280.0, 120.0),
-                RgbColor(22, 255, 0),
-                RgbColor(33, 255, 33)
+            proceed_button: build_gui_plain_button(
+                Vector2F::zero(), 
+                GuiComponentSize::Big
             ),
             app_data,
         };

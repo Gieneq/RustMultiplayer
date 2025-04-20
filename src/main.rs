@@ -52,7 +52,7 @@ struct PlayerClientArgs {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("debug"))
         .format_timestamp_millis()
         .format_file(false)
         .format_line_number(true)
@@ -213,6 +213,11 @@ mod cli_player_client {
             );
 
             let _ = window.request_inner_size(PhysicalSize::new(INITIAL_WINDOW_SIZE.x, INITIAL_WINDOW_SIZE.y));
+            {
+                let mut app_data = self.app_data.borrow_mut();
+                app_data.last_width = INITIAL_WINDOW_SIZE.x;
+                app_data.last_height = INITIAL_WINDOW_SIZE.y;
+            }
 
             let renderer = pollster::block_on(Renderer::new(window.clone()));
             self.renderer = Some(renderer);
@@ -239,8 +244,12 @@ mod cli_player_client {
 
                     {
                         // Check if should make transition
-                        let mut app_data = self.app_data.borrow_mut();
-                        if let Some(next_app_gui) = app_data.app_gui_expected_transition.take() {
+                        let next_app_gui = {
+                            let mut app_data = self.app_data.borrow_mut();
+                            app_data.app_gui_expected_transition.take()
+                        };
+
+                        if let Some(next_app_gui) = next_app_gui {
                             self.active_app_gui.transition(next_app_gui);
                         }
                     }
@@ -260,6 +269,12 @@ mod cli_player_client {
                 WindowEvent::Resized(size) => {
                     // Reconfigures the size of the surface. We do not re-render
                     // here as this event is always followed up by redraw request.
+                    {
+                        let mut app_data = self.app_data.borrow_mut();
+                        app_data.last_width = size.width as f32;
+                        app_data.last_height = size.height as f32;
+                    }
+
                     self.active_app_gui.resize_window(size.width as f32, size.height as f32);
                     renderer.resize(size);
                 },

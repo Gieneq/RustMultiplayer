@@ -24,6 +24,8 @@ pub enum GuiElement {
     Box(GuiBox)
 }
 
+const BORDER_SIZE: f32 = 8.0;
+
 pub mod components {
     use clap::builder::styling::RgbColor;
 
@@ -34,15 +36,13 @@ pub mod components {
     #[derive(Debug)]
     pub struct GuiPlainButton {
         pub rect: Rect2F,
-        pub active: bool,
         pub color_middle: RgbColor,
         pub color_outer: RgbColor,
     }
 
     impl GuiPlainButton {
-        const BORDER_SIZE: f32 = 4.0;
         pub fn new(rect: Rect2F, color_middle: RgbColor, color_outer: RgbColor) -> Self {
-            Self { rect, active: true, color_middle, color_outer }
+            Self { rect, color_middle, color_outer }
         }
 
         pub fn get_drawable_rects(&self) -> (GuiBox, GuiBox) {
@@ -53,10 +53,10 @@ pub mod components {
                 },
                 GuiBox {
                     rect: Rect2F::new(
-                        self.rect.pos.x + Self::BORDER_SIZE, 
-                        self.rect.pos.y + Self::BORDER_SIZE, 
-                        self.rect.size.x - 2.0 * Self::BORDER_SIZE,
-                        self.rect.size.y - 2.0 * Self::BORDER_SIZE
+                        self.rect.pos.x + super::BORDER_SIZE, 
+                        self.rect.pos.y + super::BORDER_SIZE, 
+                        self.rect.size.x - 2.0 * super::BORDER_SIZE,
+                        self.rect.size.y - 2.0 * super::BORDER_SIZE
                     ),
                     color: self.color_middle
                 }
@@ -65,6 +65,168 @@ pub mod components {
 
         pub fn is_inside(&self, point: &Vector2F) -> bool {
             self.rect.contains(point)
+        }
+    }
+    
+    #[derive(Debug)]
+    pub struct GuiToggleButton {
+        pub rect: Rect2F,
+        pub turned_on: bool,
+        pub color_middle_on: RgbColor,
+        pub color_middle_off: RgbColor,
+        pub color_outer: RgbColor,
+    }
+
+    impl GuiToggleButton {
+        pub fn new(rect: Rect2F, color_middle_on: RgbColor, color_middle_off: RgbColor, color_outer: RgbColor) -> Self {
+            Self { rect, turned_on: false, color_middle_on, color_middle_off, color_outer }
+        }
+        
+        pub fn get_drawable_rects(&self) -> (GuiBox, GuiBox, GuiBox) {
+            let inner_rest = Rect2F::new(
+                self.rect.pos.x + super::BORDER_SIZE, 
+                self.rect.pos.y + super::BORDER_SIZE, 
+                self.rect.size.x - 2.0 * super::BORDER_SIZE,
+                self.rect.size.y - 2.0 * super::BORDER_SIZE
+            );
+
+            let overlay_rect = Rect2F::new(
+                inner_rest.pos.x + if self.turned_on {
+                    inner_rest.size.x / 2.0
+                } else {
+                    0.0
+                }, 
+                inner_rest.pos.y, 
+                inner_rest.size.x / 2.0,
+                inner_rest.size.y
+            );
+
+            (
+                GuiBox {
+                    rect: self.rect,
+                    color: self.color_outer
+                },
+                GuiBox {
+                    rect: inner_rest,
+                    color: if self.turned_on {
+                        self.color_middle_on
+                    } else {
+                        self.color_middle_off
+                    }
+                },
+                GuiBox {
+                    rect: overlay_rect,
+                    color: self.color_outer
+                }
+            )
+        }
+
+        pub fn set_turned_on(&mut self, turned_on: bool) {
+            self.turned_on = turned_on;
+        }
+
+        pub fn toggle(&mut self) {
+            self.turned_on = !self.turned_on;
+        }
+
+        pub fn is_on(&self) -> bool {
+            self.turned_on
+        }
+
+        pub fn is_inside(&self, point: &Vector2F) -> bool {
+            self.rect.contains(point)
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct GuiIndicator {
+        pub rect: Rect2F,
+        pub turned_on: bool,
+        pub color_middle_on: RgbColor,
+        pub color_middle_off: RgbColor,
+    }
+
+    impl GuiIndicator {
+        pub fn new(rect: Rect2F, color_middle_on: RgbColor, color_middle_off: RgbColor) -> Self {
+            Self { rect, turned_on: false, color_middle_on, color_middle_off }
+        }
+
+        pub fn get_drawable_rects(&self) -> GuiBox {
+            GuiBox {
+                rect: self.rect,
+                color: if self.turned_on {
+                    self.color_middle_on
+                } else {
+                    self.color_middle_off
+                }
+            }
+        }
+
+        pub fn set_turned_on(&mut self, turned_on: bool) {
+            self.turned_on = turned_on;
+        }
+
+        pub fn toggle(&mut self) {
+            self.turned_on = !self.turned_on;
+        }
+
+        pub fn is_on(&self) -> bool {
+            self.turned_on
+        }
+    }
+
+    pub mod templates {
+        use clap::builder::styling::RgbColor;
+
+        use crate::game::math::{Rect2F, Vector2F};
+
+        use super::{GuiPlainButton, GuiToggleButton, GuiIndicator};
+
+        pub enum GuiComponentSize {
+            Small,
+            Medium,
+            Big
+        }
+
+        pub fn build_gui_plain_button(pos: Vector2F, component_size: GuiComponentSize) -> GuiPlainButton {
+            let size = match component_size {
+                GuiComponentSize::Small => Vector2F { x: 50.0, y: 25.0 },
+                GuiComponentSize::Medium => Vector2F { x: 110.0, y: 60.0 },
+                GuiComponentSize::Big => Vector2F { x: 280.0, y: 110.0 },
+            };
+            GuiPlainButton::new(
+                Rect2F { pos, size }, 
+                RgbColor(0, 186, 22),
+                RgbColor(1, 77, 30)
+            )
+        }
+
+        pub fn build_gui_toggle_button(pos: Vector2F, component_size: GuiComponentSize) -> GuiToggleButton {
+            let size = match component_size {
+                GuiComponentSize::Small => Vector2F { x: 50.0, y: 25.0 },
+                GuiComponentSize::Medium => Vector2F { x: 110.0, y: 60.0 },
+                GuiComponentSize::Big => Vector2F { x: 280.0, y: 110.0 },
+            };
+            GuiToggleButton::new(
+                Rect2F { pos, size }, 
+                RgbColor(2, 191, 27), 
+                RgbColor(105, 0, 0), 
+                RgbColor(10, 10, 10)
+            )
+        }
+        
+        pub fn build_gui_indicator(pos: Vector2F, component_size: GuiComponentSize) -> GuiIndicator {
+            let size = match component_size {
+                GuiComponentSize::Small => Vector2F { x: 16.0, y: 16.0 },
+                GuiComponentSize::Medium => Vector2F { x: 32.0, y: 32.0 },
+                GuiComponentSize::Big => Vector2F { x: 64.0, y: 64.0 },
+            };
+            GuiIndicator::new(
+                Rect2F { pos, size }, 
+                RgbColor(0, 186, 22), 
+                RgbColor(45, 61, 47), 
+            )
+
         }
     }
 }
@@ -141,6 +303,23 @@ impl GuiLayout for AppGui {
             AppGui::Ingame { gui }  => gui.draw(renderer),
             AppGui::Ending { gui }  => gui.draw(renderer),
         }
+    }
+
+    fn update(&mut self, dt: std::time::Duration) {
+        match self {
+            AppGui::Disconnected { gui } => gui.update(dt),
+            AppGui::Lobby { gui }  => gui.update(dt),
+            AppGui::Ingame { gui }  => gui.update(dt),
+            AppGui::Ending { gui }  => gui.update(dt),
+        }
+    }
+
+    fn process_key_event(&mut self, event: KeyEvent) {
+        unimplemented!()
+    }
+
+    fn process_mouse_wheele(&mut self, delta: MouseScrollDelta) {
+        unimplemented!()
     }
 }
 
