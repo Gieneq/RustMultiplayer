@@ -1,10 +1,40 @@
-use clap::builder::styling::RgbColor;
-use winit::event::{ElementState, MouseButton};
+use winit::event::{
+    ElementState, 
+    MouseButton
+};
 
-use crate::{app::client::gui_client::{guis::components::templates::{build_gui_indicator, build_gui_toggle_button, GuiComponentSize}, AppData}, game::math::{Rect2F, Vector2F}, requests::{ClientRequest, ClientResponse, GameplayStateBrief}};
+use crate::{
+    app::client::gui_client::{
+        guis::components::templates::{
+            build_gui_indicator, 
+            build_gui_toggle_button, 
+            GuiComponentSize
+        }, 
+        AppData
+    }, 
+    game::math::Vector2F, 
+    requests::{
+        ClientRequest, 
+        ClientResponse, 
+        GameplayStateBrief
+    }
+};
 
-use super::{components::{GuiIndicator, GuiToggleButton}, AppGuiTransition, GuiElement, GuiLayout};
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use super::{
+    components::{
+        GuiIndicator, 
+        GuiToggleButton
+    }, 
+    AppGuiTransition, 
+    GuiElement, 
+    GuiLayout
+};
+
+use std::{
+    cell::RefCell, 
+    rc::Rc, 
+    time::Duration
+};
 
 const UPDATE_REQUESTS_INTERVAL: Duration = Duration::from_millis(250);
 

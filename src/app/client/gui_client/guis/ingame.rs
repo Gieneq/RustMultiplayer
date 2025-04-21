@@ -1,10 +1,55 @@
 use clap::builder::styling::RgbColor;
-use winit::{dpi::PhysicalPosition, event::{ElementState, MouseButton}, keyboard::Key};
 
-use crate::{app::{client::gui_client::{guis::components::templates::{build_gui_progress_bar, GuiComponentSize}, AppData, EntityView}, SEEKING_MAX_TIME}, game::{math::{Rect2F, Vector2F}, world::PlayerRole}, requests::{ClientRequest, ClientResponse, EntityType, GameplayStateBrief, MoveDirection}};
+use winit::{
+    dpi::PhysicalPosition, 
+    event::{
+        ElementState, 
+        MouseButton
+    }, 
+    keyboard::Key
+};
 
-use super::{components::{GuiProgressBar, PlayerRoleLayout}, AppGuiTransition, GuiBox, GuiElement, GuiLayout};
-use std::{cell::RefCell, ops::Mul, rc::Rc, time::Duration};
+use crate::{
+    app::{
+        client::gui_client::{
+            guis::components::templates::{
+                build_gui_progress_bar, 
+                GuiComponentSize
+            }, 
+            AppData, 
+            EntityView
+        }, 
+        SEEKING_MAX_TIME
+    }, game::{
+        math::{
+            Rect2F, 
+            Vector2F
+        }, 
+        world::PlayerRole
+    }, 
+    requests::{
+        ClientRequest, 
+        ClientResponse, 
+        EntityType, 
+        GameplayStateBrief, 
+        MoveDirection
+    }
+};
+
+use super::{
+    components::GuiProgressBar, 
+    AppGuiTransition, 
+    GuiBox, 
+    GuiElement, 
+    GuiLayout
+};
+
+use std::{
+    cell::RefCell, 
+    ops::Mul, 
+    rc::Rc, 
+    time::Duration
+};
 
 
 
@@ -13,7 +58,6 @@ pub struct IngameGuiLayout {
     pub app_data: Rc<RefCell<AppData>>,
     entity_view_list: Vec<EntityView>,
     update_time_accumulator: Duration,
-    role_layout: Option<PlayerRoleLayout>,
 
     is_seeker: bool,
     remaining_time_progress_bar: Option<GuiProgressBar>,
@@ -50,7 +94,6 @@ impl GuiLayout for IngameGuiLayout {
             app_data,
             entity_view_list: Vec::new(),
             update_time_accumulator: Duration::from_millis(0),
-            role_layout: None,
             is_seeker,
             remaining_time_progress_bar: None,
             remaining_tries_count: 0,
@@ -178,7 +221,7 @@ impl GuiLayout for IngameGuiLayout {
 
             if let ClientResponse::GetRole { role } = response {
                 match role {
-                    PlayerRole::Hider { stats } => {
+                    PlayerRole::Hider { stats: _ } => {
                         
                     },
                     PlayerRole::Seeker { stats } => {
@@ -253,11 +296,15 @@ impl GuiLayout for IngameGuiLayout {
 
                 let marker_color = match (self.is_seeker, &entity.entity_type) {
                     (_, EntityType::Npc) => None,
-                    (true, EntityType::Hider) => {
-                        // I'm seeker, I dont recognise hiders, no mark
+                    (true, EntityType::Hider { covered: true }) => {
+                        // I'm seeker, I dont recognise covered hiders
                         None
                     },
-                    (false, EntityType::Hider) => {
+                    (true, EntityType::Hider { covered: false }) => {
+                        // I'm seeker, I dont recognise covered hiders
+                        Some(RgbColor(30, 255, 0))
+                    },
+                    (false, EntityType::Hider { covered: _}) => {
                         // I'm hider, other hiders are my allies, mark them green
                         Some(RgbColor(0, 255, 0))
                     },

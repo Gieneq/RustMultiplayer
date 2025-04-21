@@ -1,11 +1,36 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell, 
+    rc::Rc
+};
 
-use clap::builder::styling::RgbColor;
-use winit::{dpi::PhysicalPosition, event::{ElementState, MouseButton}};
+use winit::{
+    dpi::PhysicalPosition, 
+    event::{
+        ElementState, 
+        MouseButton
+    }
+};
 
-use crate::{app::client::gui_client::{guis::{components::templates::{build_gui_plain_button, GuiComponentSize}, AppGuiTransition}, renderer::Renderer, AppData}, game::math::{Rect2F, Vector2F}};
+use crate::{
+    app::client::gui_client::{
+        guis::{
+            components::templates::{
+                build_gui_plain_button, 
+                GuiComponentSize
+            }, 
+            AppGuiTransition
+        }, 
+        renderer::Renderer, 
+        AppData
+    }, 
+    game::math::Vector2F
+};
 
-use super::{components::GuiPlainButton, GuiElement, GuiLayout};
+use super::{
+    components::GuiPlainButton, 
+    GuiElement, 
+    GuiLayout
+};
 
 #[derive(Debug)]
 pub struct DisconnectedGuiLayout {

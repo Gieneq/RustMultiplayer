@@ -192,7 +192,7 @@ mod cli_player_client {
         }
     };
 
-    const INITIAL_WINDOW_SIZE: Vector2F = Vector2F { x: 800.0, y: 600.0 };
+    const INITIAL_WINDOW_SIZE: Vector2F = Vector2F { x: 600.0, y: 420.0 };
 
     struct App {
         renderer: Option<Renderer>,
@@ -203,7 +203,6 @@ mod cli_player_client {
     }
 
     impl ApplicationHandler for App {
-
         fn resumed(&mut self, event_loop: &ActiveEventLoop) {
             // Create window object
             let window = Arc::new(

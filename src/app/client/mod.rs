@@ -1,7 +1,19 @@
 pub mod gui_client;
-use std::{io::{BufRead, Write}, time::{Duration, Instant}};
+use std::{
+    io::{
+        BufRead, 
+        Write
+    }, 
+    time::{
+        Duration, 
+        Instant
+    }
+};
 
-use crate::requests::{ClientRequest, ClientResponse};
+use crate::requests::{
+    ClientRequest, 
+    ClientResponse
+};
 
 #[derive(Debug)]
 pub struct PingSessionResult {
@@ -152,7 +164,7 @@ impl MultiplayerClientHandle {
         for _ in 0..count {
             let playload_cloned = payload.clone();
             let start = Instant::now();
-            results.push(self.make_request_with_timeout(ClientRequest::Ping {payload: playload_cloned}, Some(timeout)).ok().map(|v| start.elapsed()));
+            results.push(self.make_request_with_timeout(ClientRequest::Ping {payload: playload_cloned}, Some(timeout)).ok().map(|_| start.elapsed()));
             
             std::thread::sleep(interval);
         }
@@ -192,6 +204,6 @@ impl MultiplayerClientHandle {
             log::warn!("Couldnt send shutdown signal, rason {e}");
         }
         unimplemented!("blah");
-        self.wait_until_finished()
+        // self.wait_until_finished()
     }
 }

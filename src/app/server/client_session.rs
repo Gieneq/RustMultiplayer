@@ -12,10 +12,7 @@ use tokio::io::{
     AsyncWriteExt
 };
 
-use crate::game::world::{
-    EntityId, 
-    World
-};
+use crate::game::world::EntityId;
 
 use super::MultiplayerServerContext;
 

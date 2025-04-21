@@ -4,15 +4,20 @@ use serde::{
 };
 
 use crate::{
-    app::server::{client_session::{
-        ClientSessionData, 
-        ClientSessionId
-    }, GameplayResult, GameplayState}, 
+    app::server::{
+        client_session::{
+            ClientSessionData, 
+            ClientSessionId
+        }, 
+        GameplayResult, 
+        GameplayState
+    }, 
     game::{
         math::Vector2F, 
         world::{
             Entity, 
-            EntityId, PlayerRole
+            EntityId, 
+            PlayerRole
         }
     }
 };
@@ -101,7 +106,9 @@ pub enum ClientRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum EntityType {
     Npc,
-    Hider,
+    Hider {
+        covered: bool
+    },
     Seeker
 }
 
@@ -202,7 +209,7 @@ impl EntityCheckData {
             let entity_type = if e.is_player() {
                 // Can unwrap, it is player we know
                 match e.get_player_role().unwrap() {
-                    PlayerRole::Hider { stats: _ } => EntityType::Hider,
+                    PlayerRole::Hider { stats  } => EntityType::Hider { covered: stats.covered },
                     PlayerRole::Seeker { stats: _ } => EntityType::Seeker,
                 }
             } else {

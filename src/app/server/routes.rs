@@ -63,7 +63,7 @@ pub fn route_client_request(
                 get_countdown_time_route(server_context)
             },
             ClientRequest::TryUncover { id } => {
-                try_uncover_route(server_context, client_session_id, clieant_session_data, id)
+                try_uncover_route(server_context, clieant_session_data, id)
             }
         },
         Err(e) => ClientResponse::BadRequest { err: format!("request={request_str}, reason={e}") },
@@ -310,7 +310,6 @@ fn get_countdown_time_route(server_context: Arc<MultiplayerServerContext>) -> Cl
 
 fn try_uncover_route(
     server_context: Arc<MultiplayerServerContext>,
-    client_session_id: ClientSessionId, 
     clieant_session_data: Arc<Mutex<ClientSessionData>>,
     uncovering_entity_id: EntityId
 ) -> ClientResponse {
@@ -327,6 +326,13 @@ fn try_uncover_route(
                     }
                 }
             };
+
+            // Cannot uncover self
+            if client_entity_id == uncovering_entity_id {
+                return ClientResponse::TryUncover { 
+                    uncover_result: UncoverResult { was_hider: None } 
+                };
+            }
 
             // Check if can uncover
             let can_uncover = {

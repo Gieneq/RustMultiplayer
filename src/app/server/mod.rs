@@ -16,12 +16,35 @@ use chat::ChatMessage;
 use client_session::{
     ClientSession, 
     ClientSessionDisconnectEvent, 
-    ClientSessionId, ClientSessionState
+    ClientSessionId, 
+    ClientSessionState
 };
-use rand::seq::{IndexedRandom, IteratorRandom};
-use serde::{Deserialize, Serialize};
 
-use crate::{app::{SEEKING_MAX_TIME, SEEKING_MAX_TRIES}, game::{math::Vector2F, world::{get_tiled_value, World, WorldError, ENTITY_SIZE}}};
+use rand::seq::{
+    IndexedRandom, 
+    IteratorRandom
+};
+
+use serde::{
+    Deserialize, 
+    Serialize
+};
+
+use crate::{
+    app::{
+        SEEKING_MAX_TIME, 
+        SEEKING_MAX_TRIES
+    }, 
+    game::{
+        math::Vector2F, 
+        world::{
+            get_tiled_value, 
+            World, 
+            WorldError, 
+            ENTITY_SIZE
+        }
+    }
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum MultiplayerServerError {
@@ -413,7 +436,7 @@ impl MultiplayerServer {
         generation_range: f32,
         hiders_count: usize
     ) -> Result<(), StartGameError> {
-        const NPCS_PER_HIDER: usize = 15;
+        const NPCS_PER_HIDER: usize = 9;
         let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), generation_range);
         
         // Need at least 1 spot for NPCs
@@ -553,7 +576,7 @@ impl GameplayState {
     }
     
     pub fn try_transition_from_gamerunning_to_ending(&mut self, result: GameplayResult) -> Result<(), GameplayStateTransitionError> {
-        const ENDING_COUNTDOWN: u32 = 100;
+        const ENDING_COUNTDOWN: u32 = 10;
 
         match self {
             GameplayState::Lobby { counting_to_start: _, last_result: _, } => Err(GameplayStateTransitionError::BadState),

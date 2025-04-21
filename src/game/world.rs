@@ -1,12 +1,13 @@
-use crate::game::math::Vector2I;
-
 use super::math::{
     Rect2F,
     Vector2F
 };
 
 use rand::seq::IndexedRandom;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, 
+    Serialize
+};
 
 pub const TILE_SIZE: f32 = 5.0;
 pub const ENTITY_SIZE: Vector2F = Vector2F {
@@ -550,7 +551,7 @@ impl Entity {
                         stats.covered = covered;
                         Ok(())
                     },
-                    PlayerRole::Seeker { stats } => {
+                    PlayerRole::Seeker { stats: _ } => {
                         Err(WorldError::EntityNotHider)
                     },
                 }
@@ -563,7 +564,7 @@ impl Entity {
             EntityController::Npc(_) => Err(WorldError::EntityNotPlayer),
             EntityController::Player(player_controller) => {
                 match &mut player_controller.role {
-                    PlayerRole::Hider { stats } => {
+                    PlayerRole::Hider { stats: _ } => {
                         Err(WorldError::EntityNotSeeker)
                     },
                     PlayerRole::Seeker { stats } => {
@@ -677,7 +678,7 @@ fn test_world_entity_count_free_positions() {
 #[test]
 fn test_world_entity_free_positions() {
     let entity_name = "Bob";
-    let occupied_tile_location = Vector2I::new(1, 1);
+    let occupied_tile_location = crate::game::math::Vector2I::new(1, 1);
     let entity_occupied_posiiton = get_tiled_vec(occupied_tile_location.x, occupied_tile_location.y);
 
     let mut world = World::new();
