@@ -13,6 +13,7 @@ pub struct EntityView {
     pub rect: Rect2F,
     pub color: RgbColor,
     pub marker_color: Option<RgbColor>,
+    pub highlighted: bool,
 }
 
 #[derive(Debug)]

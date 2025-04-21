@@ -484,6 +484,45 @@ impl World {
         const ENTITY_MAX_RANGE_SQUARED: f32 = ENTITY_MAX_RANGE * ENTITY_MAX_RANGE;
         (entity_position_1 - entity_position_2).length_squared() < ENTITY_MAX_RANGE_SQUARED
     }
+    
+    pub fn access_seeker_states_mut(&mut self) -> Option<&mut SeekerStats> {
+        for entity in self.entities.iter_mut() {
+            match &mut entity.controller {
+                EntityController::Npc(_) => continue,
+                EntityController::Player(player_controller) => {
+                    if let PlayerRole::Seeker { stats } = &mut player_controller.role {
+                        return Some(stats);
+                    }
+                },
+            }
+        }
+        None
+    }
+    
+    pub fn access_hiders_states_mut(&mut self) -> Vec<(EntityId, &mut HiderStats)> {
+        let mut results = vec![];
+
+        for entity in self.entities.iter_mut() {
+            match &mut entity.controller {
+                EntityController::Npc(_) => continue,
+                EntityController::Player(player_controller) => {
+                    if let PlayerRole::Hider { stats } = &mut player_controller.role {
+                        results.push((entity.id, stats));
+                    }
+                },
+            }
+        }
+        
+        results
+    }
+
+    pub fn tick_seeker_remaining_time(&mut self) {
+        if let Some(seeker_stats) = self.access_seeker_states_mut() {
+            seeker_stats.remaining_ticks = seeker_stats.remaining_ticks.saturating_sub(1);
+        } else {
+            log::warn!("Seeker not found!");
+        }
+    }
 }
 
 impl Entity {

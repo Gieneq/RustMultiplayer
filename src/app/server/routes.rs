@@ -344,15 +344,16 @@ fn try_uncover_route(
             };
 
             // Can use unwrap, both entities are proved now
-            if can_uncover {
+            let was_hider = if can_uncover {
                 let was_hider = world.get_entity_by_id(uncovering_entity_id).unwrap()
                     .get_player_role()
                     .is_some_and(|role| matches!(role, PlayerRole::Hider { stats: _ }));
 
                 if was_hider {
-                    // Uncover hider player
+                    // Uncover hider player do not remove
                     let hider_entity = world.get_entity_by_id_mut(uncovering_entity_id).unwrap();
                     hider_entity.set_hider_covered(false).unwrap();
+                    Some(true)
 
                 } else {
                     // Remove NPC and punish seeker
@@ -360,15 +361,16 @@ fn try_uncover_route(
 
                     let seeker_entity = world.get_entity_by_id_mut(client_entity_id).unwrap();
                     seeker_entity.punish_seeker().unwrap();
+                    Some(false)
                 }
             } else {
                 // Notify not in range
-                return ClientResponse::TryUncover { uncover_result: UncoverResult {
-                    was_hider: None
-                } }
+                None
+            };
+            
+            ClientResponse::TryUncover { 
+                uncover_result: UncoverResult { was_hider } 
             }
-
-            todo!()
         },
         _ => ClientResponse::BadState,
     }

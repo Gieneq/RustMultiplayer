@@ -8,7 +8,7 @@ use std::{cell::RefCell, rc::Rc};
 use clap::builder::styling::RgbColor;
 use winit::{dpi::PhysicalPosition, event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta}};
 
-use crate::game::math::Rect2F;
+use crate::game::math::{Rect2F, Vector2F};
 
 use super::{renderer::Renderer, AppData};
 use self::{disconnected::DisconnectedGuiLayout, ending::EndingGuiLayout, ingame::IngameGuiLayout, lobby::LobbyGuiLayout};
@@ -323,6 +323,8 @@ pub trait GuiLayout {
 
     fn process_mouse_events(&mut self, _position: PhysicalPosition<f64>, _button_state: ElementState, _button: MouseButton) { }
 
+    fn mouse_move(&mut self, _mouse_position: Vector2F) { }
+
     fn update(&mut self, _dt: std::time::Duration) { }
 }
 
@@ -408,6 +410,15 @@ impl GuiLayout for AppGui {
             AppGui::Lobby { gui }  => gui.process_mouse_wheele(delta),
             AppGui::Ingame { gui }  => gui.process_mouse_wheele(delta),
             AppGui::Ending { gui }  => gui.process_mouse_wheele(delta),
+        }
+    }
+    
+    fn mouse_move(&mut self, mouse_position: Vector2F) {
+        match self {
+            AppGui::Disconnected { gui } => gui.mouse_move(mouse_position),
+            AppGui::Lobby { gui }  => gui.mouse_move(mouse_position),
+            AppGui::Ingame { gui }  => gui.mouse_move(mouse_position),
+            AppGui::Ending { gui }  => gui.mouse_move(mouse_position),
         }
     }
 }

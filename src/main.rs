@@ -292,6 +292,7 @@ mod cli_player_client {
                 },
                 WindowEvent::CursorMoved { position, .. } => {
                     self.last_cursor_position = position;
+                    self.active_app_gui.mouse_move(Vector2F::new(position.x as f32, position.y as f32));  
                 }
                 WindowEvent::MouseInput { device_id: _, state, button } => {
                     self.active_app_gui.process_mouse_events(

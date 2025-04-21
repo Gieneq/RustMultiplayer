@@ -1,10 +1,10 @@
 use clap::builder::styling::RgbColor;
-use winit::{event::ElementState, keyboard::Key};
+use winit::{dpi::PhysicalPosition, event::{ElementState, MouseButton}, keyboard::Key};
 
-use crate::{app::{client::gui_client::{guis::components::templates::{build_gui_progress_bar, GuiComponentSize}, AppData, EntityView}, SEEKING_MAX_TIME}, game::{math::{Rect2F, Vector2F}, world::PlayerRole}, requests::{ClientRequest, ClientResponse, EntityType, MoveDirection}};
+use crate::{app::{client::gui_client::{guis::components::templates::{build_gui_progress_bar, GuiComponentSize}, AppData, EntityView}, SEEKING_MAX_TIME}, game::{math::{Rect2F, Vector2F}, world::PlayerRole}, requests::{ClientRequest, ClientResponse, EntityType, GameplayStateBrief, MoveDirection}};
 
-use super::{components::{GuiProgressBar, PlayerRoleLayout}, GuiBox, GuiElement, GuiLayout};
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use super::{components::{GuiProgressBar, PlayerRoleLayout}, AppGuiTransition, GuiBox, GuiElement, GuiLayout};
+use std::{cell::RefCell, ops::Mul, rc::Rc, time::Duration};
 
 
 
@@ -17,7 +17,8 @@ pub struct IngameGuiLayout {
 
     is_seeker: bool,
     remaining_time_progress_bar: Option<GuiProgressBar>,
-    remaining_tries_count: usize
+    remaining_tries_count: usize,
+    last_world_mouse_position: Option<Vector2F>,
 }
 const SCROLL_SENSITIVITY: f32 = 0.1;
 const UPDATE_NOT_FREQUENT_INTERVAL: Duration = Duration::from_millis(250);
@@ -53,6 +54,7 @@ impl GuiLayout for IngameGuiLayout {
             is_seeker,
             remaining_time_progress_bar: None,
             remaining_tries_count: 0,
+            last_world_mouse_position: None,
         };
         result.resize_window(width, height);
         result
@@ -80,6 +82,65 @@ impl GuiLayout for IngameGuiLayout {
             winit::event::MouseScrollDelta::PixelDelta(_physical_position) => { },
         }
     }
+
+    fn process_mouse_events(&mut self, _position: PhysicalPosition<f64>, button_state: ElementState, button: MouseButton) {
+        if let Some(world_mouse_position) = self.last_world_mouse_position{
+            if button_state == ElementState::Released && button == MouseButton::Left && self.is_seeker {
+                println!("Seeker clicked: {}", world_mouse_position);
+
+                let response = {
+                    let app_data = self.app_data.borrow();
+                    let cleint_handle = app_data.client_handler.as_ref().unwrap();
+                    cleint_handle.make_request(ClientRequest::WorldCheck).unwrap()
+                };
+
+                let suspicious_entity_id = if let ClientResponse::WorldCheck { entities } = response {
+                    entities.iter().find(|e| {
+                        let rect = Rect2F {
+                            pos: e.position,
+                            size: e.size
+                        };
+                        rect.contains(&world_mouse_position)
+                    })
+                    .and_then(|e| Some(e.id))
+                } else {
+                    None
+                };
+
+                if let Some(suspicious_entity_id) = suspicious_entity_id {
+                    let _response = {
+                        let app_data = self.app_data.borrow();
+                        let cleint_handle = app_data.client_handler.as_ref().unwrap();
+                        cleint_handle.make_request(ClientRequest::TryUncover { id: suspicious_entity_id }).unwrap()
+                    };
+                }
+            }
+        }
+    }
+
+    fn mouse_move(&mut self, mouse_position: Vector2F) {
+        let (camera_position, world_scale, window_size) = {
+            let app_data = self.app_data.borrow();
+            (app_data.camera, app_data.world_scale, Vector2F::new(app_data.last_width, app_data.last_height))
+        };
+        
+        let aspect_ratio = window_size.x / window_size.y;
+        let scale_x = world_scale / aspect_ratio;
+        let scale_y = world_scale;
+
+        let mouse_pos_ndc = Vector2F {
+            x: (2.0 * mouse_position.x / window_size.x) - 1.0,
+            y: -((2.0 * mouse_position.y / window_size.y) - 1.0),
+        };
+
+        let world_mouse_position = Vector2F {
+            x: mouse_pos_ndc.x / scale_x + camera_position.x,
+            y: mouse_pos_ndc.y / scale_y + camera_position.y
+        };
+        
+        self.last_world_mouse_position = Some(world_mouse_position);
+        // println!("world_mouse_position={world_mouse_position}, mouse_pos_ndc={mouse_pos_ndc}, mouse_position={mouse_position}, camera_position={camera_position}, world_scale={world_scale}");
+    }
     
     /// Must be refactored. Too much option, seeker/hider shoudl has dedicated GUI layout
     fn update(&mut self, dt: std::time::Duration) {
@@ -89,6 +150,25 @@ impl GuiLayout for IngameGuiLayout {
             self.update_time_accumulator -= UPDATE_NOT_FREQUENT_INTERVAL;
 
             // Game state and similar
+            let response = {
+                let app_data = self.app_data.borrow();
+                let cleint_handle = app_data.client_handler.as_ref().unwrap();
+                cleint_handle.make_request(ClientRequest::CheckGameplayState).unwrap()
+            };
+
+            if let ClientResponse::CheckGameplayState { state } = response {
+                match state {
+                    GameplayStateBrief::Lobby { counting_to_start: _, last_result: _ } => {
+                        log::warn!("Invalid state, client has lobby GUI but server is in ending.")
+                    },
+                    GameplayStateBrief::GameRunning => { },
+                    GameplayStateBrief::Ending { countdown: _, result: _ } => {
+                        let mut app_data_borrowed = self.app_data.borrow_mut();
+                        app_data_borrowed.app_gui_expected_transition = Some(AppGuiTransition::ToEnding);
+                    },
+                }
+            }
+
         
             let response = {
                 let app_data = self.app_data.borrow();
@@ -134,10 +214,43 @@ impl GuiLayout for IngameGuiLayout {
         };
 
         if let ClientResponse::WorldCheck { entities } = response {
+            // Extract observed entity position 
+            let extract_observed_entity_position = || {
+                let response = {
+                    let app_data = self.app_data.borrow();
+                    let cleint_handle = app_data.client_handler.as_ref().unwrap();
+                    cleint_handle.make_request(ClientRequest::GetEntityId).unwrap()
+                };
+
+                if let ClientResponse::GetEntityId { id } = response {
+                    if let Some(entity_id) = id {
+                        let found_entity = entities.iter()
+                            .find(|e| e.id == entity_id);
+                        if let Some(found_entity) = found_entity {
+                            return Some(found_entity.position);
+                        }
+                    }
+                }
+                None
+            };
+
+            // Update camera
+            if let Some(observed_entity_pos) = extract_observed_entity_position() {
+                const SMOOTHING_ALPHA: f32 = 0.09;
+                let mut app_data = self.app_data.borrow_mut();
+                let delta_pos = (observed_entity_pos - app_data.camera).mul(SMOOTHING_ALPHA);
+                app_data.camera += delta_pos
+            }
+
             // Update visible entities
             self.entity_view_list.clear();
 
             entities.iter().for_each(|entity| {
+                let rect = Rect2F {
+                    pos: entity.position,
+                    size: entity.size,
+                };
+
                 let marker_color = match (self.is_seeker, &entity.entity_type) {
                     (_, EntityType::Npc) => None,
                     (true, EntityType::Hider) => {
@@ -158,13 +271,22 @@ impl GuiLayout for IngameGuiLayout {
                     },
                 };
 
+                // Highlighting
+                let highlighted = if self.is_seeker && matches!(entity.entity_type, EntityType::Seeker) {
+                    false
+                } else if !self.is_seeker {
+                    false
+                } else if let Some(world_mouse_position) = self.last_world_mouse_position {
+                    rect.contains(&world_mouse_position)
+                } else {
+                    false
+                };
+
                 let entity_view = EntityView {
-                    rect: Rect2F {
-                        pos: entity.position,
-                        size: entity.size,
-                    },
+                    rect,
                     color: RgbColor(entity.color[0], entity.color[1], entity.color[2]),
-                    marker_color
+                    marker_color,
+                    highlighted
                 };
                 self.entity_view_list.push(entity_view);
             });
@@ -202,10 +324,10 @@ impl GuiLayout for IngameGuiLayout {
             renderer.batch_append_gui_element(GuiElement::Box(gui_box_3));
         }
 
-        
-        const REMAINING_TRIES_TOP_OFFSET: f32 = 40.0;
+        const REMAINING_TRIES_TOP_OFFSET: f32 = 48.0;
         const REMAINING_TRIES_MARGIN: f32 = 8.0;
         const TRIES_SIZE: f32 = 24.0;
+
         for i in 0..self.remaining_tries_count {
             let gui_box = GuiBox {
                 rect: Rect2F::new(

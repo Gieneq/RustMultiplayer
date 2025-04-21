@@ -310,11 +310,15 @@ impl Renderer {
 
         self.render_batch.entity_views.iter().for_each(|ev| {
             const MIX_FACTOR: f32 = 0.5;
-            let rgb_color = if let Some(marker_color) = ev.marker_color {
+            let mut rgb_color = if let Some(marker_color) = ev.marker_color {
                 mix_rgb(ev.color, marker_color, MIX_FACTOR)
             } else {
                 ev.color
             };
+
+            if ev.highlighted {
+                rgb_color = mix_rgb(rgb_color, RgbColor(252, 215, 3), MIX_FACTOR);
+            }
 
             let color = [
                 rgb_color.0 as f32 / 255.0, 

@@ -267,7 +267,8 @@ impl MultiplayerServer {
 
     fn main_loop_procedure(server_context: Arc<MultiplayerServerContext>) {
         const CLIENTS_REQUIRED_TO_START: usize = 2;
-        const TICKS_TO_COUNTDOWN: u32 = 10;
+        const TICKS_TO_COUNTDOWN: u32 = 30;
+        //TODO constnt tick time no matter FPS
 
         let mut gameplay_state_guard = server_context.gameplay_state.lock().unwrap();
 
@@ -309,6 +310,8 @@ impl MultiplayerServer {
         }
         
         if let GameplayState::GameRunning { world } = &mut *gameplay_state_guard {
+            world.tick_seeker_remaining_time();
+
             // TODO some game end check
             let result = Self::check_gameplay_result(world);
 
@@ -371,7 +374,7 @@ impl MultiplayerServer {
         world: &mut World,
         clients: &Mutex<HashMap<u32, client_session::ClientSessionHandler>>
     ) -> Result<(), StartGameError> {
-        const MAPSIZE_GENERATION_FACTOR: usize = 3;
+        const MAPSIZE_GENERATION_FACTOR: usize = 5;
 
         log::info!("Game just started!");
         let mut rng = rand::rng();
@@ -410,7 +413,7 @@ impl MultiplayerServer {
         generation_range: f32,
         hiders_count: usize
     ) -> Result<(), StartGameError> {
-        const NPCS_PER_HIDER: usize = 2;
+        const NPCS_PER_HIDER: usize = 15;
         let free_tiles = world.get_free_tiles_positions(Vector2F::zero(), generation_range);
         
         // Need at least 1 spot for NPCs
