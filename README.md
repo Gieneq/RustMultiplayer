@@ -11,14 +11,33 @@ Features:
 - ✔️ Unit & integration tested
 - ✔️ Ingame Chat (CLI only so far)
 
+## Quick Try
+
+You can download the latest release [here](https://github.com/Gieneq/RustMultiplayer/releases/tag/v0.1.0)
+
+Run server
+```cmd
+rust_multiplayer server
+```
+
+Start client (new player):
+ ```cmd
+ rust_multiplayer player
+ ```
+
 ## Lobby
 
-Connecting players are placed in lobby. If all of them hit ready then game starts:
+Players who connect are placed in the lobby.
+Once all click Ready, the game begins:
 <p align="center"> <img src="res/hide_n_seek_opening.gif"> </p>
 
 ## Gameplay
 
-One player is selected as seeker. Seeker can left-click entities to try uncovering them. If he miss then loose 1 heart. If seeker loose all hearts or remaining time hits zero then he loose. If seeker corectly marks hider then hider gets uncovered.
+One player is randomly selected as the Seeker.
+The Seeker left-clicks entities to uncover hidden players:
+- ❌ A wrong guess costs a heart
+- 💡 Finding a real hider uncovers them
+- 🕒 Game ends when time or lives run out
 
 <p align="center"> <img src="res/hide_n_seek_gameplay.gif"> </p>
 
@@ -29,11 +48,11 @@ Server:
 - 2 main tasks loops:
   - networking handling incomming connections, handling requests, forming responses
   - game world managing game states, updating entities
-- clients connections not wired immediatelly to ingame Entity (ECS based)
+- Players are decoupled from entities (ECS-style)
 
 Client:
-- abstractian over TCP request-responses
-- multithreading friendly
+- Abstractian over TCP request-responses
+- Multithreading friendly
 - WGPU frontend
 
 ## Tests & Running
